@@ -51,3 +51,42 @@ jobs:
           node-version: "22"
       - run: npm install --no-audit --no-fund
       - run: npm run build
+
+  postgres:
+    name: PostgreSQL integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: foodoo_test
+          POSTGRES_USER: foodoo
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U foodoo -d foodoo_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DJANGO_DEBUG: "true"
+      DJANGO_SECRET_KEY: "ci-only-not-for-production"
+      DATABASE_URL: "postgresql://foodoo:ci-only-password@localhost:5432/foodoo_test"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install -r requirements.txt
+      - name: PostgreSQL migration check
+        run: python manage.py makemigrations --check --dry-run
+      - name: Apply PostgreSQL migrations
+        run: python manage.py migrate --noinput
+      - name: Test checkout and tenant isolation on PostgreSQL
+        run: python manage.py test --verbosity 2
