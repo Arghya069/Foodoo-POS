@@ -129,6 +129,11 @@ def orders(request):
  m=membership(request)
  if not m:return no_member()
  if request.method=="GET":return Response([{"id":o.pk,"status":o.status,"total":str(o.total),"receipt_number":o.receipt_number} for o in Order.objects.filter(restaurant=m.restaurant).order_by("-id")[:50]])
+ phone=str(request.data.get("customer_phone","")).strip()
+ name=str(request.data.get("customer_name","")).strip()
+ if phone and not re.fullmatch(r"[+0-9 -]{8,20}",phone):return Response({"customer_phone":"Enter a valid phone number (8–20 characters)."},status=400)
+ if len(name)>160:return Response({"customer_name":"Name is too long."},status=400)
+ if request.data.get("whatsapp_consent") is True and not phone:return Response({"whatsapp_consent":"Customer phone is required for WhatsApp consent."},status=400)
  entries=request.data.get("items",[])
  if not isinstance(entries,list) or not entries:return Response({"items":"At least one item required"},status=400)
  try:
@@ -143,7 +148,7 @@ def orders(request):
  r=m.restaurant
  cgst=money(subtotal*r.cgst_rate/100);sgst=money(subtotal*r.sgst_rate/100)
  with transaction.atomic():
-  o=Order.objects.create(restaurant=r,created_by=request.user,customer_name=str(request.data.get("customer_name",""))[:160],customer_phone=str(request.data.get("customer_phone",""))[:20],whatsapp_consent=request.data.get("whatsapp_consent") is True,subtotal=subtotal,cgst_rate=r.cgst_rate,sgst_rate=r.sgst_rate,cgst_amount=cgst,sgst_amount=sgst,total=subtotal+cgst+sgst)
+  o=Order.objects.create(restaurant=r,created_by=request.user,customer_name=name,customer_phone=phone,whatsapp_consent=request.data.get("whatsapp_consent") is True,subtotal=subtotal,cgst_rate=r.cgst_rate,sgst_rate=r.sgst_rate,cgst_amount=cgst,sgst_amount=sgst,total=subtotal+cgst+sgst)
   OrderLine.objects.bulk_create([OrderLine(order=o,menu_item=items[k],name_snapshot=items[k].name,unit_price=items[k].price,quantity=q,line_total=money(items[k].price*q)) for k,q in quantities.items()])
  return Response({"id":o.pk,"subtotal":str(subtotal),"cgst":str(cgst),"sgst":str(sgst),"total":str(o.total)},status=201)
 @api_view(["POST"])
