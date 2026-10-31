@@ -155,3 +155,27 @@ class PosFlowTests(TestCase):
         self.assertEqual(result,[{"customer_phone":"9999999999","customer_name":"Guest"}])
         self.login(self.outsider)
         self.assertEqual(self.client.get("/api/customers/suggest/?q=999").data,[])
+
+class SessionAuthenticationTests(TestCase):
+    def setUp(self):
+        self.user=User.objects.create_user("session-owner",password="secure-password")
+        restaurant=Restaurant.objects.create(name="Session Restaurant")
+        Membership.objects.create(user=self.user,restaurant=restaurant,role="admin")
+
+    def test_csrf_login_session_and_logout(self):
+        from django.test import Client
+        import json
+        client=Client(enforce_csrf_checks=True)
+        self.assertEqual(client.get("/api/me/").status_code,403)
+        self.assertEqual(client.post("/api/auth/login/",data=json.dumps({"username":"session-owner","password":"secure-password"}),content_type="application/json").status_code,403)
+        client.get("/api/auth/csrf/")
+        token=client.cookies["csrftoken"].value
+        invalid=client.post("/api/auth/login/",data=json.dumps({"username":"session-owner","password":"wrong"}),content_type="application/json",HTTP_X_CSRFTOKEN=token)
+        self.assertEqual(invalid.status_code,401)
+        response=client.post("/api/auth/login/",data=json.dumps({"username":"session-owner","password":"secure-password"}),content_type="application/json",HTTP_X_CSRFTOKEN=token)
+        self.assertEqual(response.status_code,200)
+        self.assertIn("sessionid",client.cookies)
+        self.assertEqual(client.get("/api/me/").status_code,200)
+        csrf=client.cookies["csrftoken"].value
+        self.assertEqual(client.post("/api/auth/logout/",content_type="application/json",HTTP_X_CSRFTOKEN=csrf).status_code,200)
+        self.assertEqual(client.get("/api/me/").status_code,403)
