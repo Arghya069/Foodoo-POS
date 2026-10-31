@@ -19,8 +19,8 @@ class Membership(models.Model):
 class MenuItem(models.Model):
  restaurant=models.ForeignKey(Restaurant,on_delete=models.PROTECT)
  name=models.CharField(max_length=160)
- food_type=models.CharField(max_length=20,choices=[(x,x.title()) for x in ("veg","non_veg","egg","chicken","mutton","paneer","mushroom","other")],default="veg")
- category=models.CharField(max_length=24,choices=[(x,x.replace("_"," ").title()) for x in ("snack","beverage","combo","main_course","starter","dessert","breakfast","other")],default="main_course")
+ food_type=models.CharField(max_length=20,choices=[("veg","Veg"),("non_veg","Non Veg"),("egg","Egg"),("chicken","Chicken"),("mutton","Mutton"),("paneer","Paneer"),("mushroom","Mushroom"),("other","Other")],default="veg")
+ category=models.CharField(max_length=24,choices=[("snack","Snack"),("beverage","Beverage"),("combo","Combo"),("main_course","Main Course"),("starter","Starter"),("dessert","Dessert"),("breakfast","Breakfast"),("other","Other")],default="main_course")
  description=models.TextField(blank=True)
  image_url=models.URLField(max_length=1000,blank=True)
  price=models.DecimalField(max_digits=12,decimal_places=2,validators=[MinValueValidator(Decimal("0"))])
