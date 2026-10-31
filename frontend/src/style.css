@@ -4,3 +4,5 @@ textarea{display:block;width:100%;min-height:100px;padding:12px;border:1px solid
 select{display:block;width:100%;padding:12px;border:1px solid #dbe4e2;border-radius:7px;margin:7px 0 18px;background:#fff}.restaurant-logo-preview{display:block;max-width:150px;max-height:100px;object-fit:contain;margin:8px 0 16px}
 
 .consent{display:flex;align-items:flex-start;gap:10px;line-height:1.45;margin:4px 0 14px}.consent input[type=checkbox]{width:18px;height:18px;flex-shrink:0;margin:0;accent-color:#126b5b}
+
+.phone-suggestions{border:1px solid #dbe4e2;border-radius:8px;background:#fff;overflow:hidden;margin:-10px 0 14px;box-shadow:0 8px 24px #0001}.phone-suggestions button{display:flex;justify-content:space-between;gap:12px;align-items:center;width:100%;text-align:left;border-radius:0;background:#fff;color:#1f2933;border-bottom:1px solid #edf1f0;padding:12px}.phone-suggestions button:hover,.phone-suggestions button:focus{background:#dcefea}.phone-suggestions span{color:#52615c;font-weight:400}
