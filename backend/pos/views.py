@@ -143,43 +143,42 @@ def thermal_receipt_pdf(order):
  left=4.5*mm
  usable=48*mm
  entries=[]
- def wrapped(text,size=7,bold=False):
+ def text(value,size=7,bold=False,center=False):
   font="Helvetica-Bold" if bold else "Helvetica"
-  for paragraph in str(text or "").splitlines() or [""]:
-   words=paragraph.split()
+  for paragraph in str(value or "").splitlines() or [""]:
    line=""
-   for word in words:
+   for word in paragraph.split():
     candidate=(line+" "+word).strip()
     if stringWidth(candidate,font,size)>usable and line:
-     entries.append(("text",line,size,bold))
+     entries.append(("text",line,size,bold,center))
      line=word
     else:line=candidate
-   entries.append(("text",line,size,bold))
+   entries.append(("text",line,size,bold,center))
  def rule():entries.append(("rule",))
- wrapped(order.restaurant.name,10,True)
- wrapped(order.restaurant.address,7)
- if order.restaurant.contact_phone:wrapped("Tel: "+order.restaurant.contact_phone)
- if order.restaurant.gstin:wrapped("GSTIN: "+order.restaurant.gstin)
+ text(order.restaurant.name,10,True,True)
+ text(order.restaurant.address,7,False,True)
+ if order.restaurant.contact_phone:text("Tel: "+order.restaurant.contact_phone,7,False,True)
+ if order.restaurant.gstin:text("GSTIN: "+order.restaurant.gstin,7,False,True)
  entries.append(("gap",5))
- wrapped("TAX INVOICE / RECEIPT",8,True)
- wrapped("No: "+order.receipt_number)
- wrapped("Date: "+timezone.localtime(order.paid_at).strftime("%d-%m-%Y %H:%M"))
- if order.customer_name:wrapped("Customer: "+order.customer_name)
- if order.customer_phone:wrapped("Phone: "+order.customer_phone)
+ text("TAX INVOICE / RECEIPT",8,True,True)
+ text("No: "+order.receipt_number)
+ text("Date: "+timezone.localtime(order.paid_at).strftime("%d-%m-%Y %H:%M"))
+ if order.customer_name:text("Customer: "+order.customer_name)
+ if order.customer_phone:text("Phone: "+order.customer_phone)
  rule()
+ entries.append(("tablehead",))
  for line in order.lines.all():
-  wrapped(line.name_snapshot,8,True)
-  wrapped(f"  {line.quantity} x {line.unit_price:.2f}       {line.line_total:.2f}")
+  text(line.name_snapshot,7,True)
+  entries.append(("itemtotal",str(line.quantity)+" x "+str(line.unit_price),f"{line.line_total:.2f}"))
  rule()
- wrapped(f"Subtotal: Rs {order.subtotal:.2f}")
- wrapped(f"CGST {order.cgst_rate}%: Rs {order.cgst_amount:.2f}")
- wrapped(f"SGST {order.sgst_rate}%: Rs {order.sgst_amount:.2f}")
+ for label,amount in [("Subtotal",order.subtotal),(f"CGST {order.cgst_rate}%",order.cgst_amount),(f"SGST {order.sgst_rate}%",order.sgst_amount)]:
+  entries.append(("amount",label,f"{amount:.2f}",7))
  rule()
- wrapped(f"TOTAL: Rs {order.total:.2f}",10,True)
- wrapped("PAID - "+(order.payment_method or "manual").upper())
- entries.append(("gap",5))
- wrapped("Powered by foodoo",7,True)
- wrapped("Thank you!")
+ entries.append(("amount","TOTAL",f"{order.total:.2f}",9))
+ text("PAID - "+(order.payment_method or "manual").upper())
+ entries.append(("gap",6))
+ text("Powered by foodoo",7,True,True)
+ text("Thank you!",7,False,True)
  logo=None
  if order.restaurant.logo_data:
   try:
@@ -187,7 +186,13 @@ def thermal_receipt_pdf(order):
    logo=ImageReader(BytesIO(raw))
   except Exception:logo=None
  logo_height=19*mm if logo else 0
- height=max(70*mm,16*mm+logo_height+(3*mm if logo else 0)+sum((entry[2]+4 if entry[0]=="text" else 9 if entry[0]=="rule" else entry[1]) for entry in entries))
+ def line_height(entry):
+  if entry[0]=="text":return entry[2]+4
+  if entry[0] in ("tablehead","itemtotal"):return 14
+  if entry[0]=="amount":return entry[3]+6
+  if entry[0]=="rule":return 9
+  return entry[1]
+ height=max(70*mm,16*mm+logo_height+(3*mm if logo else 0)+sum(map(line_height,entries)))
  output=BytesIO()
  pdf=canvas.Canvas(output,pagesize=(width,height),pageCompression=1)
  y=height-6*mm
@@ -197,20 +202,24 @@ def thermal_receipt_pdf(order):
   pdf.drawImage(logo,left+(usable-dw)/2,y-logo_height,width=dw,height=logo_height,preserveAspectRatio=True,mask="auto")
   y-=logo_height+3*mm
  for entry in entries:
-  if entry[0]=="text":
-   _,value,size,bold=entry
+  kind=entry[0]
+  if kind=="text":
+   _,value,size,bold,center=entry
    y-=size+4
-   pdf.setFont("Helvetica-Bold" if bold else "Helvetica",size)
-   pdf.drawString(left,y,value)
-  elif entry[0]=="rule":
-   y-=6
-   pdf.setLineWidth(.5)
-   pdf.line(left,y,left+usable,y)
-   y-=3
+   font="Helvetica-Bold" if bold else "Helvetica"
+   pdf.setFont(font,size)
+   x=left+(usable-stringWidth(value,font,size))/2 if center else left
+   pdf.drawString(x,y,value)
+  elif kind=="rule":
+   y-=6;pdf.setLineWidth(.5);pdf.line(left,y,left+usable,y);y-=3
+  elif kind=="tablehead":
+   y-=11;pdf.setFont("Helvetica-Bold",7);pdf.drawString(left,y,"ITEM");pdf.drawRightString(left+usable,y,"PRICE")
+  elif kind=="itemtotal":
+   y-=11;pdf.setFont("Helvetica",7);pdf.drawString(left,y,entry[1]);pdf.drawRightString(left+usable,y,entry[2])
+  elif kind=="amount":
+   y-=entry[3]+6;pdf.setFont("Helvetica-Bold" if entry[3]==9 else "Helvetica",entry[3]);pdf.drawString(left,y,entry[1]);pdf.drawRightString(left+usable,y,entry[2])
   else:y-=entry[1]
- pdf.showPage()
- pdf.save()
- output.seek(0)
+ pdf.showPage();pdf.save();output.seek(0)
  return output
 
 @api_view(["GET"])
