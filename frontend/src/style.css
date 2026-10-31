@@ -6,3 +6,18 @@ select{display:block;width:100%;padding:12px;border:1px solid #dbe4e2;border-rad
 .consent{display:flex;align-items:flex-start;gap:10px;line-height:1.45;margin:4px 0 14px}.consent input[type=checkbox]{width:18px;height:18px;flex-shrink:0;margin:0;accent-color:#126b5b}
 
 .phone-suggestions{border:1px solid #dbe4e2;border-radius:8px;background:#fff;overflow:hidden;margin:-10px 0 14px;box-shadow:0 8px 24px #0001}.phone-suggestions button{display:flex;justify-content:space-between;gap:12px;align-items:center;width:100%;text-align:left;border-radius:0;background:#fff;color:#1f2933;border-bottom:1px solid #edf1f0;padding:12px}.phone-suggestions button:hover,.phone-suggestions button:focus{background:#dcefea}.phone-suggestions span{color:#52615c;font-weight:400}
+
+/* Foodoo sign-in */
+.login-shell{min-height:100vh;display:grid;place-items:center;padding:32px 18px;background:radial-gradient(circle at 15% 10%,#dcefea 0,transparent 35%),linear-gradient(145deg,#f7faf9,#e8f3f0)}
+.login-shell .login{margin:0;width:100%;max-width:440px;padding:40px;border:1px solid #dbe9e4;box-shadow:0 22px 70px #0e544824}
+.login-mark{color:#126b5b;font-size:28px;letter-spacing:-1px;font-weight:800;margin-bottom:28px}
+.login-mark strong{font-weight:800}
+.login-eyebrow{font-size:10px;font-weight:800;letter-spacing:2px;color:#577e74;margin-bottom:12px}
+.login-shell h1{font-size:30px;color:#1f2933;margin:0 0 9px}
+.login-subtitle{font-size:14px;color:#63746d;margin:0 0 30px}
+.login-shell label{display:block;margin:0 0 7px}
+.login-shell input{background:#fcfefd;transition:border-color .15s,box-shadow .15s}
+.login-shell input:focus{outline:0;border-color:#126b5b;box-shadow:0 0 0 3px #dcefea}
+.login-shell button{margin-top:8px;min-height:46px}
+.login-footer{text-align:center;color:#87958f;font-size:12px;margin:27px 0 0}
+.loading{text-align:center;color:#126b5b;font-weight:700}
