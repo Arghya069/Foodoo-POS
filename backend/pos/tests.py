@@ -1,4 +1,6 @@
 from decimal import Decimal
+from io import BytesIO
+from pypdf import PdfReader
 from django.contrib.auth.models import User
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -55,7 +57,11 @@ class PosFlowTests(TestCase):
         receipt = self.client.get(f"/api/orders/{order_id}/receipt/")
         self.assertEqual(receipt.status_code, 200)
         self.assertEqual(receipt["Content-Type"], "application/pdf")
-        self.assertTrue(b"".join(receipt.streaming_content).startswith(b"%PDF"))
+        pdf_bytes=b"".join(receipt.streaming_content)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+        pdf=PdfReader(BytesIO(pdf_bytes))
+        self.assertAlmostEqual(float(pdf.pages[0].mediabox.width), 57*72/25.4, delta=0.1)
+        self.assertIn("Powered by foodoo", pdf.pages[0].extract_text())
 
     def test_cannot_order_item_from_another_restaurant(self):
         self.login(self.outsider)
@@ -87,3 +93,19 @@ class PosFlowTests(TestCase):
         self.login(self.outsider)
         self.assertEqual(self.client.patch(f"/api/menu/{item_id}/", {"price": "1.00"}, format="json").status_code, 403)
         self.assertNotIn(item_id, [i["id"] for i in self.client.get("/api/menu/").data])
+
+    def test_menu_classification(self):
+        self.login(self.admin)
+        created = self.client.post("/api/menu/", {"name":"Paneer Tikka", "price":"190.00","food_type":"paneer","category":"starter"},format="json")
+        self.assertEqual(created.status_code,201,created.data)
+        self.assertEqual(created.data["food_type"],"paneer")
+        self.assertEqual(created.data["category"],"starter")
+        invalid = self.client.post("/api/menu/", {"name":"Invalid","price":"100.00","food_type":"unknown"},format="json")
+        self.assertEqual(invalid.status_code,400)
+
+    def test_restaurant_logo_setting_is_admin_only(self):
+        self.login(self.staff)
+        self.assertEqual(self.client.patch("/api/restaurant/",{"logo_data":"data:image/png;base64,YWJj"},format="json").status_code,403)
+        self.login(self.admin)
+        self.assertEqual(self.client.patch("/api/restaurant/",{"logo_data":"data:image/png;base64,YWJj"},format="json").status_code,200)
+        self.assertEqual(self.client.get("/api/restaurant/").data["logo_data"],"data:image/png;base64,YWJj")
