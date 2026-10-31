@@ -14,7 +14,7 @@ TEMPLATES=[]
 WSGI_APPLICATION="config.wsgi.application"
 DATABASES={"default":dj_database_url.parse(os.getenv("DATABASE_URL",f"sqlite:///{BASE_DIR/'db.sqlite3'}"),conn_max_age=60,conn_health_checks=True)}
 DEFAULT_AUTO_FIELD="django.db.models.BigAutoField"
-REST_FRAMEWORK={"DEFAULT_AUTHENTICATION_CLASSES":["rest_framework.authentication.SessionAuthentication","rest_framework.authentication.BasicAuthentication"],"DEFAULT_PERMISSION_CLASSES":["rest_framework.permissions.IsAuthenticated"]}
+REST_FRAMEWORK={"DEFAULT_AUTHENTICATION_CLASSES":["rest_framework.authentication.SessionAuthentication"],"DEFAULT_PERMISSION_CLASSES":["rest_framework.permissions.IsAuthenticated"]}
 CORS_ALLOWED_ORIGINS=[x.strip() for x in os.getenv("CORS_ALLOWED_ORIGINS","http://localhost:5173").split(",") if x.strip()]
 LANGUAGE_CODE="en-in"
 TIME_ZONE="Asia/Kolkata"
@@ -27,3 +27,8 @@ CSRF_COOKIE_SECURE=not DEBUG
 
 # Base64-encoded 4 MiB menu images require ~5.6 MiB JSON requests in local MVP.
 DATA_UPLOAD_MAX_MEMORY_SIZE=8*1024*1024
+
+SESSION_COOKIE_HTTPONLY=True
+SESSION_COOKIE_SAMESITE="Lax"
+SESSION_COOKIE_AGE=8*60*60
+SESSION_SAVE_EVERY_REQUEST=True
