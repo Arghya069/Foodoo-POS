@@ -134,3 +134,24 @@ class PosFlowTests(TestCase):
         self.assertEqual(bad.status_code,400)
         good=self.client.post("/api/menu/",{"name":"Fish curry","price":"100.00","food_type":"non_veg","food_subtype":"fish"},format="json")
         self.assertEqual(good.status_code,201,good.data)
+
+    def test_image_upload_saved_and_returned_for_cashier(self):
+        import base64
+        self.login(self.admin)
+        sample="data:image/png;base64,"+base64.b64encode(b"sample-photo").decode()
+        response=self.client.post("/api/menu/",{"name":"Biryani","price":"200.00","image_data":sample},format="json")
+        self.assertEqual(response.status_code,201,response.data)
+        self.assertEqual(response.data["image_data"],sample)
+        self.login(self.staff)
+        items=self.client.get("/api/menu/").data
+        self.assertEqual(next(x for x in items if x["name"]=="Biryani")["image_data"],sample)
+
+    def test_phone_suggestions_paid_and_restaurant_scoped(self):
+        self.login(self.staff)
+        order_id=self.create_order().data["id"]
+        self.assertEqual(self.client.get("/api/customers/suggest/?q=999").data,[])
+        self.client.post(f"/api/orders/{order_id}/pay/",{"payment_method":"cash"},format="json")
+        result=self.client.get("/api/customers/suggest/?q=999").data
+        self.assertEqual(result,[{"customer_phone":"9999999999","customer_name":"Guest"}])
+        self.login(self.outsider)
+        self.assertEqual(self.client.get("/api/customers/suggest/?q=999").data,[])
