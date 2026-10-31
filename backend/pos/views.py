@@ -2,7 +2,15 @@ from decimal import Decimal,ROUND_HALF_UP
 import uuid
 from django.db import transaction
 from django.db.models import F
-from django.http import HttpResponse
+from django.http import FileResponse
+from io import BytesIO
+from xml.sax.saxutils import escape as xml_escape
+from reportlab.platypus import SimpleDocTemplate,Paragraph,Table,TableStyle,Spacer
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet,ParagraphStyle
+from reportlab.lib.enums import TA_RIGHT
+from reportlab.lib.pagesizes import A4
+from rest_framework import serializers
 from django.utils import timezone
 from django.utils.html import escape
 from rest_framework.decorators import api_view,permission_classes
@@ -35,19 +43,37 @@ def restaurant(request):
     setattr(r,k,v)
   r.save()
  return Response({"id":str(r.id),"name":r.name,"address":r.address,"contact_phone":r.contact_phone,"gstin":r.gstin,"cgst_rate":str(r.cgst_rate),"sgst_rate":str(r.sgst_rate)})
+class MenuItemSerializer(serializers.ModelSerializer):
+ class Meta:
+  model=MenuItem
+  fields=["id","name","description","image_url","price","active"]
+  read_only_fields=["id"]
+
 @api_view(["GET","POST"])
 def menu(request):
  m=membership(request)
  if not m:return no_member()
  if request.method=="POST":
   if m.role!="admin":return Response({"detail":"Admin only"},status=403)
-  try:
-   price=Decimal(str(request.data.get("price")));assert price.is_finite() and price>=0 and price.as_tuple().exponent>=-2
-   name=str(request.data.get("name","")).strip();assert name
-  except (Exception):return Response({"detail":"Invalid name or price"},status=400)
-  obj=MenuItem.objects.create(restaurant=m.restaurant,name=name,price=price)
-  return Response({"id":obj.pk,"name":obj.name,"price":str(obj.price)},status=201)
- return Response([{"id":o.pk,"name":o.name,"price":str(o.price)} for o in MenuItem.objects.filter(restaurant=m.restaurant,active=True).order_by("name")])
+  serializer=MenuItemSerializer(data=request.data)
+  serializer.is_valid(raise_exception=True)
+  item=serializer.save(restaurant=m.restaurant)
+  return Response(MenuItemSerializer(item).data,status=201)
+ items=MenuItem.objects.filter(restaurant=m.restaurant,active=True).order_by("name")
+ return Response(MenuItemSerializer(items,many=True).data)
+
+@api_view(["PATCH"])
+def menu_detail(request,pk):
+ m=membership(request)
+ if not m:return no_member()
+ if m.role!="admin":return Response({"detail":"Admin only"},status=403)
+ try:item=MenuItem.objects.get(pk=pk,restaurant=m.restaurant)
+ except MenuItem.DoesNotExist:return Response({"detail":"Not found"},status=404)
+ serializer=MenuItemSerializer(item,data=request.data,partial=True)
+ serializer.is_valid(raise_exception=True)
+ serializer.save()
+ return Response(serializer.data)
+
 @api_view(["GET","POST"])
 def orders(request):
  m=membership(request)
@@ -87,6 +113,21 @@ def receipt(request,pk):
  try:o=Order.objects.select_related("restaurant").prefetch_related("lines").get(pk=pk,restaurant=m.restaurant,status="paid")
  except Order.DoesNotExist:return Response({"detail":"Receipt unavailable"},status=404)
  r=o.restaurant
- lines="".join(f"<tr><td>{escape(x.name_snapshot)}</td><td>{x.quantity}</td><td>₹{x.line_total}</td></tr>" for x in o.lines.all())
- html=f"<html><head><meta charset='utf-8'><title>Receipt {escape(o.receipt_number)}</title></head><body><h2>{escape(r.name)}</h2><p>{escape(r.address)}<br>Phone: {escape(r.contact_phone)}<br>GSTIN: {escape(r.gstin)}</p><p>Receipt {escape(o.receipt_number)}</p><table>{lines}</table><p>Subtotal ₹{o.subtotal}<br>CGST {o.cgst_rate}%: ₹{o.cgst_amount}<br>SGST {o.sgst_rate}%: ₹{o.sgst_amount}</p><h3>Total ₹{o.total}</h3><button onclick='window.print()'>Print</button></body></html>"
- return HttpResponse(html)
+ output=BytesIO()
+ doc=SimpleDocTemplate(output,pagesize=A4,rightMargin=45,leftMargin=45,topMargin=40,bottomMargin=40)
+ ss=getSampleStyleSheet()
+ ss.add(ParagraphStyle(name="FoodooTitle",parent=ss["Heading1"],fontSize=18,leading=22,textColor=colors.HexColor("#126B5B")))
+ safe=lambda value:xml_escape(str(value or ""))
+ story=[Paragraph(safe(r.name),ss["FoodooTitle"]),Paragraph(safe(r.address).replace("\\n","<br/>"),ss["Normal"]),Paragraph("Phone: "+safe(r.contact_phone)+" | GSTIN: "+safe(r.gstin),ss["Normal"]),Spacer(1,18),Paragraph("TAX INVOICE / RECEIPT",ss["Heading2"]),Paragraph("Invoice: "+safe(o.receipt_number),ss["Normal"]),Paragraph("Date: "+timezone.localtime(o.paid_at).strftime("%d %b %Y %I:%M %p"),ss["Normal"]),Paragraph("Customer: "+safe(o.customer_name or "Walk-in"),ss["Normal"]),Paragraph("Customer phone: "+safe(o.customer_phone),ss["Normal"]),Spacer(1,18)]
+ rows=[["Item","Qty","Rate (INR)","Amount (INR)"]]
+ for line in o.lines.all():rows.append([Paragraph(safe(line.name_snapshot),ss["Normal"]),str(line.quantity),str(line.unit_price),str(line.line_total)])
+ table=Table(rows,colWidths=[225,45,95,95],repeatRows=1)
+ table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#DCEFEA")),("TEXTCOLOR",(0,0),(-1,0),colors.HexColor("#0E5448")),("VALIGN",(0,0),(-1,-1),"TOP"),("ALIGN",(1,1),(-1,-1),"RIGHT"),("TOPPADDING",(0,0),(-1,-1),9),("BOTTOMPADDING",(0,0),(-1,-1),9),("LINEBELOW",(0,0),(-1,0),1,colors.HexColor("#126B5B")),("LINEBELOW",(0,1),(-1,-1),0.25,colors.HexColor("#DCEFEA"))]))
+ story.extend([table,Spacer(1,18)])
+ summary=[["Subtotal",f"INR {o.subtotal:.2f}"],[f"CGST ({o.cgst_rate}%)",f"INR {o.cgst_amount:.2f}"],[f"SGST ({o.sgst_rate}%)",f"INR {o.sgst_amount:.2f}"],["TOTAL",f"INR {o.total:.2f}"]]
+ totals=Table(summary,colWidths=[330,130])
+ totals.setStyle(TableStyle([("ALIGN",(1,0),(1,-1),"RIGHT"),("FONTNAME",(0,-1),(-1,-1),"Helvetica-Bold"),("FONTSIZE",(0,-1),(-1,-1),13),("LINEABOVE",(0,-1),(-1,-1),1,colors.HexColor("#126B5B")),("TOPPADDING",(0,0),(-1,-1),8),("BOTTOMPADDING",(0,0),(-1,-1),8)]))
+ story.extend([totals,Spacer(1,20),Paragraph("Payment status: PAID (manually confirmed)",ss["Normal"]),Paragraph("Thank you for your visit.",ss["Normal"])])
+ doc.build(story)
+ output.seek(0)
+ return FileResponse(output,content_type="application/pdf",filename=f"{o.receipt_number}.pdf")
