@@ -1,3 +1,3 @@
 from django.urls import path
 from . import views
-urlpatterns=[path("me/",views.me),path("restaurant/",views.restaurant),path("menu/",views.menu),path("customers/lookup/",views.customer_lookup),path("menu/<int:pk>/",views.menu_detail),path("orders/",views.orders),path("orders/<int:pk>/pay/",views.pay),path("orders/<int:pk>/receipt/",views.receipt)]
+urlpatterns=[path("me/",views.me),path("restaurant/",views.restaurant),path("menu/",views.menu),path("customers/lookup/",views.customer_lookup),path("customers/suggest/",views.customer_suggestions),path("menu/<int:pk>/",views.menu_detail),path("orders/",views.orders),path("orders/<int:pk>/pay/",views.pay),path("orders/<int:pk>/receipt/",views.receipt)]
