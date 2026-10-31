@@ -1,5 +1,10 @@
 from decimal import Decimal,ROUND_HALF_UP
 import uuid
+import base64
+import re
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
 from django.db import transaction
 from django.db.models import F
 from django.http import FileResponse
@@ -41,12 +46,17 @@ def restaurant(request):
     try:v=Decimal(str(request.data[k]));assert v.is_finite() and Decimal("0")<=v<=Decimal("100") and v.as_tuple().exponent>=-2
     except (Exception):return Response({k:"Invalid percentage"},status=400)
     setattr(r,k,v)
+  if "logo_data" in request.data:
+   logo=request.data["logo_data"]
+   if not isinstance(logo,str) or (logo and (not re.match(r"^data:image/(png|jpeg);base64,[A-Za-z0-9+/=]+$",logo) or len(logo)>220000)):
+    return Response({"logo_data":"Use a small PNG or JPEG logo (maximum about 160 KB)."},status=400)
+   r.logo_data=logo
   r.save()
- return Response({"id":str(r.id),"name":r.name,"address":r.address,"contact_phone":r.contact_phone,"gstin":r.gstin,"cgst_rate":str(r.cgst_rate),"sgst_rate":str(r.sgst_rate)})
+ return Response({"id":str(r.id),"name":r.name,"address":r.address,"contact_phone":r.contact_phone,"gstin":r.gstin,"logo_data":r.logo_data,"cgst_rate":str(r.cgst_rate),"sgst_rate":str(r.sgst_rate)})
 class MenuItemSerializer(serializers.ModelSerializer):
  class Meta:
   model=MenuItem
-  fields=["id","name","description","image_url","price","active"]
+  fields=["id","name","description","image_url","food_type","category","price","active"]
   read_only_fields=["id"]
 
 @api_view(["GET","POST"])
@@ -106,28 +116,86 @@ def pay(request,pk):
   if o.status=="draft":
    o.status="paid";o.paid_at=timezone.now();o.receipt_number="FD-"+uuid.uuid4().hex[:12].upper();o.save(update_fields=["status","paid_at","receipt_number"])
  return Response({"id":o.pk,"status":o.status,"receipt_number":o.receipt_number,"total":str(o.total)})
+def thermal_receipt_pdf(order):
+ from reportlab.pdfbase.pdfmetrics import stringWidth
+ width=57*mm
+ left=4.5*mm
+ usable=48*mm
+ entries=[]
+ def wrapped(text,size=7,bold=False):
+  font="Helvetica-Bold" if bold else "Helvetica"
+  for paragraph in str(text or "").splitlines() or [""]:
+   words=paragraph.split()
+   line=""
+   for word in words:
+    candidate=(line+" "+word).strip()
+    if stringWidth(candidate,font,size)>usable and line:
+     entries.append(("text",line,size,bold))
+     line=word
+    else:line=candidate
+   entries.append(("text",line,size,bold))
+ def rule():entries.append(("rule",))
+ wrapped(order.restaurant.name,10,True)
+ wrapped(order.restaurant.address,7)
+ if order.restaurant.contact_phone:wrapped("Tel: "+order.restaurant.contact_phone)
+ if order.restaurant.gstin:wrapped("GSTIN: "+order.restaurant.gstin)
+ entries.append(("gap",5))
+ wrapped("TAX INVOICE / RECEIPT",8,True)
+ wrapped("No: "+order.receipt_number)
+ wrapped("Date: "+timezone.localtime(order.paid_at).strftime("%d-%m-%Y %H:%M"))
+ if order.customer_name:wrapped("Customer: "+order.customer_name)
+ if order.customer_phone:wrapped("Phone: "+order.customer_phone)
+ rule()
+ for line in order.lines.all():
+  wrapped(line.name_snapshot,8,True)
+  wrapped(f"  {line.quantity} x {line.unit_price:.2f}       {line.line_total:.2f}")
+ rule()
+ wrapped(f"Subtotal: Rs {order.subtotal:.2f}")
+ wrapped(f"CGST {order.cgst_rate}%: Rs {order.cgst_amount:.2f}")
+ wrapped(f"SGST {order.sgst_rate}%: Rs {order.sgst_amount:.2f}")
+ rule()
+ wrapped(f"TOTAL: Rs {order.total:.2f}",10,True)
+ wrapped("PAID - manually confirmed")
+ entries.append(("gap",5))
+ wrapped("Powered by foodoo",7,True)
+ wrapped("Thank you!")
+ logo=None
+ if order.restaurant.logo_data:
+  try:
+   raw=base64.b64decode(order.restaurant.logo_data.split(",",1)[1],validate=True)
+   logo=ImageReader(BytesIO(raw))
+  except Exception:logo=None
+ logo_height=19*mm if logo else 0
+ height=max(70*mm,12*mm+logo_height+sum((size+4) if typ=="text" else (5 if typ=="rule" else gap) for typ,*data in entries for size,gap in [(data[1] if typ=="text" else 0,data[0] if typ=="gap" else 0)]))
+ output=BytesIO()
+ pdf=canvas.Canvas(output,pagesize=(width,height),pageCompression=1)
+ y=height-6*mm
+ if logo:
+  iw,ih=logo.getSize()
+  dw=min(iw/ih*logo_height,usable)
+  pdf.drawImage(logo,left+(usable-dw)/2,y-logo_height,width=dw,height=logo_height,preserveAspectRatio=True,mask="auto")
+  y-=logo_height+3*mm
+ for entry in entries:
+  if entry[0]=="text":
+   _,value,size,bold=entry
+   y-=size+4
+   pdf.setFont("Helvetica-Bold" if bold else "Helvetica",size)
+   pdf.drawString(left,y,value)
+  elif entry[0]=="rule":
+   y-=6
+   pdf.setLineWidth(.5)
+   pdf.line(left,y,left+usable,y)
+   y-=3
+  else:y-=entry[1]
+ pdf.showPage()
+ pdf.save()
+ output.seek(0)
+ return output
+
 @api_view(["GET"])
 def receipt(request,pk):
  m=membership(request)
  if not m:return no_member()
  try:o=Order.objects.select_related("restaurant").prefetch_related("lines").get(pk=pk,restaurant=m.restaurant,status="paid")
  except Order.DoesNotExist:return Response({"detail":"Receipt unavailable"},status=404)
- r=o.restaurant
- output=BytesIO()
- doc=SimpleDocTemplate(output,pagesize=A4,rightMargin=45,leftMargin=45,topMargin=40,bottomMargin=40)
- ss=getSampleStyleSheet()
- ss.add(ParagraphStyle(name="FoodooTitle",parent=ss["Heading1"],fontSize=18,leading=22,textColor=colors.HexColor("#126B5B")))
- safe=lambda value:xml_escape(str(value or ""))
- story=[Paragraph(safe(r.name),ss["FoodooTitle"]),Paragraph(safe(r.address).replace("\\n","<br/>"),ss["Normal"]),Paragraph("Phone: "+safe(r.contact_phone)+" | GSTIN: "+safe(r.gstin),ss["Normal"]),Spacer(1,18),Paragraph("TAX INVOICE / RECEIPT",ss["Heading2"]),Paragraph("Invoice: "+safe(o.receipt_number),ss["Normal"]),Paragraph("Date: "+timezone.localtime(o.paid_at).strftime("%d %b %Y %I:%M %p"),ss["Normal"]),Paragraph("Customer: "+safe(o.customer_name or "Walk-in"),ss["Normal"]),Paragraph("Customer phone: "+safe(o.customer_phone),ss["Normal"]),Spacer(1,18)]
- rows=[["Item","Qty","Rate (INR)","Amount (INR)"]]
- for line in o.lines.all():rows.append([Paragraph(safe(line.name_snapshot),ss["Normal"]),str(line.quantity),str(line.unit_price),str(line.line_total)])
- table=Table(rows,colWidths=[225,45,95,95],repeatRows=1)
- table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#DCEFEA")),("TEXTCOLOR",(0,0),(-1,0),colors.HexColor("#0E5448")),("VALIGN",(0,0),(-1,-1),"TOP"),("ALIGN",(1,1),(-1,-1),"RIGHT"),("TOPPADDING",(0,0),(-1,-1),9),("BOTTOMPADDING",(0,0),(-1,-1),9),("LINEBELOW",(0,0),(-1,0),1,colors.HexColor("#126B5B")),("LINEBELOW",(0,1),(-1,-1),0.25,colors.HexColor("#DCEFEA"))]))
- story.extend([table,Spacer(1,18)])
- summary=[["Subtotal",f"INR {o.subtotal:.2f}"],[f"CGST ({o.cgst_rate}%)",f"INR {o.cgst_amount:.2f}"],[f"SGST ({o.sgst_rate}%)",f"INR {o.sgst_amount:.2f}"],["TOTAL",f"INR {o.total:.2f}"]]
- totals=Table(summary,colWidths=[330,130])
- totals.setStyle(TableStyle([("ALIGN",(1,0),(1,-1),"RIGHT"),("FONTNAME",(0,-1),(-1,-1),"Helvetica-Bold"),("FONTSIZE",(0,-1),(-1,-1),13),("LINEABOVE",(0,-1),(-1,-1),1,colors.HexColor("#126B5B")),("TOPPADDING",(0,0),(-1,-1),8),("BOTTOMPADDING",(0,0),(-1,-1),8)]))
- story.extend([totals,Spacer(1,20),Paragraph("Payment status: PAID (manually confirmed)",ss["Normal"]),Paragraph("Thank you for your visit.",ss["Normal"])])
- doc.build(story)
- output.seek(0)
- return FileResponse(output,content_type="application/pdf",filename=f"{o.receipt_number}.pdf")
+ return FileResponse(thermal_receipt_pdf(o),content_type="application/pdf",filename=f"{o.receipt_number}.pdf")
