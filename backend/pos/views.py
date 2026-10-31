@@ -6,7 +6,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F,Sum,Count
 from django.http import FileResponse
 from io import BytesIO
 from xml.sax.saxutils import escape as xml_escape
@@ -17,6 +17,7 @@ from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from rest_framework import serializers
 from django.utils import timezone
+from datetime import date,datetime,time,timedelta
 from django.utils.html import escape
 from rest_framework.decorators import api_view,permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -123,6 +124,51 @@ def customer_suggestions(request):
    suggestions.append(x)
   if len(suggestions)==8:break
  return Response(suggestions)
+
+def report_window(request):
+ start=request.query_params.get("start","")
+ end=request.query_params.get("end","")
+ try:
+  first=date.fromisoformat(start) if start else timezone.localdate()-timedelta(days=29)
+  last=date.fromisoformat(end) if end else timezone.localdate()
+  if first>last or (last-first).days>366:raise ValueError()
+ except ValueError:
+  return None,None
+ return first,last
+
+@api_view(["GET"])
+def order_history(request):
+ m=membership(request)
+ if not m:return no_member()
+ first,last=report_window(request)
+ if first is None:return Response({"detail":"Choose a valid date range up to 366 days."},status=400)
+ qs=Order.objects.filter(restaurant=m.restaurant,created_at__date__gte=first,created_at__date__lte=last).order_by("-created_at","-id")
+ state=request.query_params.get("status","all")
+ if state not in ("all","paid","draft"):return Response({"detail":"Invalid status filter."},status=400)
+ if state!="all":qs=qs.filter(status=state)
+ search=request.query_params.get("q","").strip()[:80]
+ if search:
+  from django.db.models import Q
+  qs=qs.filter(Q(customer_phone__icontains=search)|Q(customer_name__icontains=search)|Q(receipt_number__icontains=search))
+ try: page=max(1,int(request.query_params.get("page","1")))
+ except ValueError:return Response({"detail":"Invalid page."},status=400)
+ if page>10000:return Response({"detail":"Invalid page."},status=400)
+ count=qs.count()
+ subset=list(qs.prefetch_related("lines")[(page-1)*25:page*25])
+ return Response({"count":count,"page":page,"page_size":25,"results":[{"id":o.id,"status":o.status,"receipt_number":o.receipt_number,"customer_name":o.customer_name,"customer_phone":o.customer_phone,"payment_method":o.payment_method,"subtotal":str(o.subtotal),"cgst":str(o.cgst_amount),"sgst":str(o.sgst_amount),"total":str(o.total),"created_at":o.created_at.isoformat(),"paid_at":o.paid_at.isoformat() if o.paid_at else None,"items":[{"name":x.name_snapshot,"quantity":x.quantity,"unit_price":str(x.unit_price),"total":str(x.line_total)} for x in o.lines.all()]} for o in subset]})
+
+@api_view(["GET"])
+def sales_report(request):
+ m=membership(request)
+ if not m:return no_member()
+ if m.role!="admin":return Response({"detail":"Admin only"},status=403)
+ first,last=report_window(request)
+ if first is None:return Response({"detail":"Choose a valid date range up to 366 days."},status=400)
+ paid=Order.objects.filter(restaurant=m.restaurant,status="paid",paid_at__date__gte=first,paid_at__date__lte=last)
+ totals=paid.aggregate(orders=Count("id"),subtotal=Sum("subtotal"),cgst=Sum("cgst_amount"),sgst=Sum("sgst_amount"),revenue=Sum("total"))
+ methods=list(paid.values("payment_method").annotate(orders=Count("id"),revenue=Sum("total")).order_by("payment_method"))
+ daily=list(paid.values("paid_at__date").annotate(orders=Count("id"),revenue=Sum("total")).order_by("paid_at__date"))
+ return Response({"start":first.isoformat(),"end":last.isoformat(),"orders":totals["orders"],"subtotal":str(totals["subtotal"] or 0),"cgst":str(totals["cgst"] or 0),"sgst":str(totals["sgst"] or 0),"revenue":str(totals["revenue"] or 0),"payment_methods":[{"method":x["payment_method"],"orders":x["orders"],"revenue":str(x["revenue"])} for x in methods],"daily":[{"date":x["paid_at__date"].isoformat(),"orders":x["orders"],"revenue":str(x["revenue"])} for x in daily]})
 
 @api_view(["GET","POST"])
 def orders(request):
