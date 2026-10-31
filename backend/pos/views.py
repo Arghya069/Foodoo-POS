@@ -57,6 +57,7 @@ class MenuItemSerializer(serializers.ModelSerializer):
  class Meta:
   model=MenuItem
   fields=["id","name","description","image_url","image_data","food_type","food_subtype","category","price","active"]
+  read_only_fields=["id"]
  def validate(self,attrs):
   main=attrs.get("food_type",getattr(self.instance,"food_type","veg"))
   sub=attrs.get("food_subtype",getattr(self.instance,"food_subtype","none"))
@@ -64,10 +65,14 @@ class MenuItemSerializer(serializers.ModelSerializer):
   if sub in ("paneer","mushroom") and main!="veg":raise serializers.ValidationError({"food_subtype":"This subtype requires Veg."})
   return attrs
  def validate_image_data(self,value):
-  if value and (len(value)>250000 or not re.fullmatch(r"data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+",value)):
-   raise serializers.ValidationError("Provide a PNG, JPEG or WebP image under 180 KB.")
+  if value and (len(value)>5592500 or not re.fullmatch(r"data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+",value)):
+   raise serializers.ValidationError("Provide a PNG, JPEG or WebP image up to 4 MB.")
+  if value:
+   try:
+    raw=base64.b64decode(value.split(",",1)[1],validate=True)
+    if len(raw)>4*1024*1024:raise serializers.ValidationError("Image must be at most 4 MB.")
+   except (ValueError,base64.binascii.Error):raise serializers.ValidationError("Invalid encoded image.")
   return value
-  read_only_fields=["id"]
 
 @api_view(["GET","POST"])
 def menu(request):
@@ -102,6 +107,22 @@ def customer_lookup(request):
  if not re.fullmatch(r"[+0-9 -]{8,20}",phone):return Response({"customer_name":""})
  last=Order.objects.filter(restaurant=m.restaurant,customer_phone=phone,status="paid").exclude(customer_name="").order_by("-paid_at").first()
  return Response({"customer_name":last.customer_name if last else ""})
+
+@api_view(["GET"])
+def customer_suggestions(request):
+ m=membership(request)
+ if not m:return no_member()
+ prefix=str(request.query_params.get("q","")).strip()
+ if not re.fullmatch(r"[+0-9 -]{3,20}",prefix):return Response([])
+ matches=Order.objects.filter(restaurant=m.restaurant,status="paid",customer_phone__startswith=prefix).exclude(customer_name="").exclude(customer_phone="").order_by("-paid_at").values("customer_phone","customer_name")[:100]
+ seen=set()
+ suggestions=[]
+ for x in matches:
+  if x["customer_phone"] not in seen:
+   seen.add(x["customer_phone"])
+   suggestions.append(x)
+  if len(suggestions)==8:break
+ return Response(suggestions)
 
 @api_view(["GET","POST"])
 def orders(request):
