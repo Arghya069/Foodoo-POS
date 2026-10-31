@@ -49,7 +49,7 @@ class PosFlowTests(TestCase):
         self.assertEqual(Decimal(response.data["total"]), Decimal("210.00"))
         order_id = response.data["id"]
         self.assertEqual(self.client.get(f"/api/orders/{order_id}/receipt/").status_code, 404)
-        first = self.client.post(f"/api/orders/{order_id}/pay/", {}, format="json")
+        first = self.client.post(f"/api/orders/{order_id}/pay/", {"payment_method":"cash"}, format="json")
         second = self.client.post(f"/api/orders/{order_id}/pay/", {}, format="json")
         self.assertEqual(first.status_code, 200)
         self.assertEqual(first.data["receipt_number"], second.data["receipt_number"])
@@ -96,9 +96,10 @@ class PosFlowTests(TestCase):
 
     def test_menu_classification(self):
         self.login(self.admin)
-        created = self.client.post("/api/menu/", {"name":"Paneer Tikka", "price":"190.00","food_type":"paneer","category":"starter"},format="json")
+        created = self.client.post("/api/menu/", {"name":"Paneer Tikka", "price":"190.00","food_type":"veg","food_subtype":"paneer","category":"starter"},format="json")
         self.assertEqual(created.status_code,201,created.data)
-        self.assertEqual(created.data["food_type"],"paneer")
+        self.assertEqual(created.data["food_type"],"veg")
+        self.assertEqual(created.data["food_subtype"],"paneer")
         self.assertEqual(created.data["category"],"starter")
         invalid = self.client.post("/api/menu/", {"name":"Invalid","price":"100.00","food_type":"unknown"},format="json")
         self.assertEqual(invalid.status_code,400)
@@ -109,3 +110,27 @@ class PosFlowTests(TestCase):
         self.login(self.admin)
         self.assertEqual(self.client.patch("/api/restaurant/",{"logo_data":"data:image/png;base64,YWJj"},format="json").status_code,200)
         self.assertEqual(self.client.get("/api/restaurant/").data["logo_data"],"data:image/png;base64,YWJj")
+
+    def test_payment_method_required_and_customer_lookup_tenant_scoped(self):
+        self.login(self.staff)
+        order_id=self.create_order().data["id"]
+        self.assertEqual(self.client.post(f"/api/orders/{order_id}/pay/", {},format="json").status_code,400)
+        paid=self.client.post(f"/api/orders/{order_id}/pay/",{"payment_method":"upi"},format="json")
+        self.assertEqual(paid.status_code,200)
+        self.assertEqual(paid.data["payment_method"],"upi")
+        self.assertEqual(self.client.get("/api/customers/lookup/?phone=9999999999").data["customer_name"],"Guest")
+        self.login(self.outsider)
+        self.assertEqual(self.client.get("/api/customers/lookup/?phone=9999999999").data["customer_name"],"")
+
+    def test_whatsapp_consent_is_saved_but_not_sent(self):
+        self.login(self.staff)
+        response=self.client.post("/api/orders/",{"items":[{"id":self.item.id,"quantity":1}],"customer_phone":"9999999999","whatsapp_consent":True},format="json")
+        self.assertEqual(response.status_code,201)
+        self.assertTrue(Order.objects.get(pk=response.data["id"]).whatsapp_consent)
+
+    def test_menu_subtype_consistency(self):
+        self.login(self.admin)
+        bad=self.client.post("/api/menu/",{"name":"Fish curry","price":"100.00","food_type":"veg","food_subtype":"fish"},format="json")
+        self.assertEqual(bad.status_code,400)
+        good=self.client.post("/api/menu/",{"name":"Fish curry","price":"100.00","food_type":"non_veg","food_subtype":"fish"},format="json")
+        self.assertEqual(good.status_code,201,good.data)
