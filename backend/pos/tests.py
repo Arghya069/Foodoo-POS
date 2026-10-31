@@ -54,7 +54,8 @@ class PosFlowTests(TestCase):
         self.assertEqual(Order.objects.get(pk=order_id).status, "paid")
         receipt = self.client.get(f"/api/orders/{order_id}/receipt/")
         self.assertEqual(receipt.status_code, 200)
-        self.assertIn("210.00", receipt.content.decode())
+        self.assertEqual(receipt["Content-Type"], "application/pdf")
+        self.assertTrue(b"".join(receipt.streaming_content).startswith(b"%PDF"))
 
     def test_cannot_order_item_from_another_restaurant(self):
         self.login(self.outsider)
@@ -74,3 +75,15 @@ class PosFlowTests(TestCase):
         response = self.client.post("/api/orders/", {"items": [{"id": self.item.id, "quantity": 1, "price": "0.01"}]}, format="json")
         self.assertEqual(response.status_code, 201)
         self.assertEqual(Decimal(response.data["subtotal"]), Decimal("200.00"))
+
+    def test_menu_description_image_and_tenant_scoped_edit(self):
+        self.login(self.admin)
+        created = self.client.post("/api/menu/", {"name": "Paneer Roll", "price": "80.00", "description": "Fresh paneer in a wrap", "image_url": "https://example.com/roll.jpg"}, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        item_id = created.data["id"]
+        self.assertEqual(created.data["description"], "Fresh paneer in a wrap")
+        self.assertEqual(created.data["image_url"], "https://example.com/roll.jpg")
+        self.assertEqual(self.client.patch(f"/api/menu/{item_id}/", {"price": "85.00"}, format="json").status_code, 200)
+        self.login(self.outsider)
+        self.assertEqual(self.client.patch(f"/api/menu/{item_id}/", {"price": "1.00"}, format="json").status_code, 403)
+        self.assertNotIn(item_id, [i["id"] for i in self.client.get("/api/menu/").data])
