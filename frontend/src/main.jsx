@@ -1,7 +1,7 @@
 import React,{useState,useEffect} from "react";
 import{createRoot}from"react-dom/client";
 import "./style.css";
-const API=import.meta.env.VITE_API_URL||"/api";
+const API=import.meta.env.DEV?"/api":(import.meta.env.VITE_API_URL||"/api");
 const cookie=(name)=>document.cookie.split("; ").find(x=>x.startsWith(name+"="))?.split("=")[1]||"";
 function App(){
 const[uploading,SetUploading]=useState(false),[booting,SetBooting]=useState(true),[loggingIn,SetLoggingIn]=useState(false),[suggestions,SetSuggestions]=useState([]),[paymentMethod,SetPaymentMethod]=useState("cash"),[phoneLookup,SetPhoneLookup]=useState(""),[search,Search]=useState(""),[editing,E]=useState(null),[username,U]=useState("admin"),[password,P]=useState(""),[auth,A]=useState(""),[me,M]=useState(null),[profile,S]=useState(null),[menu,Q]=useState([]),[cart,C]=useState({}),[customer,N]=useState({customer_name:"",customer_phone:""}),[order,O]=useState(null),[tab,T]=useState("pos"),[newItem,I]=useState({name:"",price:"",description:"",image_url:"",food_type:"veg",food_subtype:"none",category:"main_course"}),[message,G]=useState("");
