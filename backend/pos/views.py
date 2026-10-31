@@ -56,7 +56,17 @@ def restaurant(request):
 class MenuItemSerializer(serializers.ModelSerializer):
  class Meta:
   model=MenuItem
-  fields=["id","name","description","image_url","food_type","category","price","active"]
+  fields=["id","name","description","image_url","image_data","food_type","food_subtype","category","price","active"]
+ def validate(self,attrs):
+  main=attrs.get("food_type",getattr(self.instance,"food_type","veg"))
+  sub=attrs.get("food_subtype",getattr(self.instance,"food_subtype","none"))
+  if sub in ("egg","chicken","mutton","fish") and main!="non_veg":raise serializers.ValidationError({"food_subtype":"This subtype requires Non-veg."})
+  if sub in ("paneer","mushroom") and main!="veg":raise serializers.ValidationError({"food_subtype":"This subtype requires Veg."})
+  return attrs
+ def validate_image_data(self,value):
+  if value and (len(value)>250000 or not re.fullmatch(r"data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+",value)):
+   raise serializers.ValidationError("Provide a PNG, JPEG or WebP image under 180 KB.")
+  return value
   read_only_fields=["id"]
 
 @api_view(["GET","POST"])
@@ -84,6 +94,15 @@ def menu_detail(request,pk):
  serializer.save()
  return Response(serializer.data)
 
+@api_view(["GET"])
+def customer_lookup(request):
+ m=membership(request)
+ if not m:return no_member()
+ phone=str(request.query_params.get("phone","")).strip()
+ if not re.fullmatch(r"[+0-9 -]{8,20}",phone):return Response({"customer_name":""})
+ last=Order.objects.filter(restaurant=m.restaurant,customer_phone=phone,status="paid").exclude(customer_name="").order_by("-paid_at").first()
+ return Response({"customer_name":last.customer_name if last else ""})
+
 @api_view(["GET","POST"])
 def orders(request):
  m=membership(request)
@@ -103,7 +122,7 @@ def orders(request):
  r=m.restaurant
  cgst=money(subtotal*r.cgst_rate/100);sgst=money(subtotal*r.sgst_rate/100)
  with transaction.atomic():
-  o=Order.objects.create(restaurant=r,created_by=request.user,customer_name=str(request.data.get("customer_name",""))[:160],customer_phone=str(request.data.get("customer_phone",""))[:20],subtotal=subtotal,cgst_rate=r.cgst_rate,sgst_rate=r.sgst_rate,cgst_amount=cgst,sgst_amount=sgst,total=subtotal+cgst+sgst)
+  o=Order.objects.create(restaurant=r,created_by=request.user,customer_name=str(request.data.get("customer_name",""))[:160],customer_phone=str(request.data.get("customer_phone",""))[:20],whatsapp_consent=request.data.get("whatsapp_consent") is True,subtotal=subtotal,cgst_rate=r.cgst_rate,sgst_rate=r.sgst_rate,cgst_amount=cgst,sgst_amount=sgst,total=subtotal+cgst+sgst)
   OrderLine.objects.bulk_create([OrderLine(order=o,menu_item=items[k],name_snapshot=items[k].name,unit_price=items[k].price,quantity=q,line_total=money(items[k].price*q)) for k,q in quantities.items()])
  return Response({"id":o.pk,"subtotal":str(subtotal),"cgst":str(cgst),"sgst":str(sgst),"total":str(o.total)},status=201)
 @api_view(["POST"])
@@ -114,8 +133,10 @@ def pay(request,pk):
   try:o=Order.objects.select_for_update().get(pk=pk,restaurant=m.restaurant)
   except Order.DoesNotExist:return Response({"detail":"Not found"},status=404)
   if o.status=="draft":
-   o.status="paid";o.paid_at=timezone.now();o.receipt_number="FD-"+uuid.uuid4().hex[:12].upper();o.save(update_fields=["status","paid_at","receipt_number"])
- return Response({"id":o.pk,"status":o.status,"receipt_number":o.receipt_number,"total":str(o.total)})
+   method=request.data.get("payment_method")
+   if method not in ("cash","card","upi"):return Response({"payment_method":"Choose Cash, Card or UPI."},status=400)
+   o.status="paid";o.payment_method=method;o.paid_at=timezone.now();o.receipt_number="FD-"+uuid.uuid4().hex[:12].upper();o.save(update_fields=["status","payment_method","paid_at","receipt_number"])
+ return Response({"id":o.pk,"status":o.status,"receipt_number":o.receipt_number,"total":str(o.total),"payment_method":o.payment_method,"whatsapp_consent":o.whatsapp_consent})
 def thermal_receipt_pdf(order):
  from reportlab.pdfbase.pdfmetrics import stringWidth
  width=57*mm
@@ -155,7 +176,7 @@ def thermal_receipt_pdf(order):
  wrapped(f"SGST {order.sgst_rate}%: Rs {order.sgst_amount:.2f}")
  rule()
  wrapped(f"TOTAL: Rs {order.total:.2f}",10,True)
- wrapped("PAID - manually confirmed")
+ wrapped("PAID - "+(order.payment_method or "manual").upper())
  entries.append(("gap",5))
  wrapped("Powered by foodoo",7,True)
  wrapped("Thank you!")
