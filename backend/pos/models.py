@@ -18,6 +18,8 @@ class Membership(models.Model):
 class MenuItem(models.Model):
  restaurant=models.ForeignKey(Restaurant,on_delete=models.PROTECT)
  name=models.CharField(max_length=160)
+ description=models.TextField(blank=True)
+ image_url=models.URLField(max_length=1000,blank=True)
  price=models.DecimalField(max_digits=12,decimal_places=2,validators=[MinValueValidator(Decimal("0"))])
  active=models.BooleanField(default=True)
 class Order(models.Model):
