@@ -166,7 +166,7 @@ def thermal_receipt_pdf(order):
    logo=ImageReader(BytesIO(raw))
   except Exception:logo=None
  logo_height=19*mm if logo else 0
- height=max(70*mm,12*mm+logo_height+sum((size+4) if typ=="text" else (5 if typ=="rule" else gap) for typ,*data in entries for size,gap in [(data[1] if typ=="text" else 0,data[0] if typ=="gap" else 0)]))
+ height=max(70*mm,16*mm+logo_height+(3*mm if logo else 0)+sum((entry[2]+4 if entry[0]=="text" else 9 if entry[0]=="rule" else entry[1]) for entry in entries))
  output=BytesIO()
  pdf=canvas.Canvas(output,pagesize=(width,height),pageCompression=1)
  y=height-6*mm
