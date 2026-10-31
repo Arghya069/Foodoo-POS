@@ -9,6 +9,7 @@ class Restaurant(models.Model):
  address=models.TextField(blank=True)
  contact_phone=models.CharField(max_length=25,blank=True)
  gstin=models.CharField(max_length=15,blank=True)
+ logo_data=models.TextField(blank=True)
  cgst_rate=models.DecimalField(max_digits=5,decimal_places=2,default=Decimal("2.50"),validators=[MinValueValidator(0),MaxValueValidator(100)])
  sgst_rate=models.DecimalField(max_digits=5,decimal_places=2,default=Decimal("2.50"),validators=[MinValueValidator(0),MaxValueValidator(100)])
 class Membership(models.Model):
@@ -18,6 +19,8 @@ class Membership(models.Model):
 class MenuItem(models.Model):
  restaurant=models.ForeignKey(Restaurant,on_delete=models.PROTECT)
  name=models.CharField(max_length=160)
+ food_type=models.CharField(max_length=20,choices=[(x,x.title()) for x in ("veg","non_veg","egg","chicken","mutton","paneer","mushroom","other")],default="veg")
+ category=models.CharField(max_length=24,choices=[(x,x.replace("_"," ").title()) for x in ("snack","beverage","combo","main_course","starter","dessert","breakfast","other")],default="main_course")
  description=models.TextField(blank=True)
  image_url=models.URLField(max_length=1000,blank=True)
  price=models.DecimalField(max_digits=12,decimal_places=2,validators=[MinValueValidator(Decimal("0"))])
