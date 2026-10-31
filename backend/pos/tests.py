@@ -179,3 +179,41 @@ class SessionAuthenticationTests(TestCase):
         csrf=client.cookies["csrftoken"].value
         self.assertEqual(client.post("/api/auth/logout/",content_type="application/json",HTTP_X_CSRFTOKEN=csrf).status_code,200)
         self.assertEqual(client.get("/api/me/").status_code,403)
+
+class OrderHistoryReportTests(TestCase):
+    def setUp(self):
+        self.restaurant=Restaurant.objects.create(name="Sales Restaurant")
+        self.other=Restaurant.objects.create(name="Other Sales")
+        self.owner=User.objects.create_user("sales-owner",password="pass")
+        self.cashier=User.objects.create_user("sales-staff",password="pass")
+        self.outsider=User.objects.create_user("other-staff",password="pass")
+        Membership.objects.create(user=self.owner,restaurant=self.restaurant,role="admin")
+        Membership.objects.create(user=self.cashier,restaurant=self.restaurant,role="staff")
+        Membership.objects.create(user=self.outsider,restaurant=self.other,role="staff")
+        self.menu_item=MenuItem.objects.create(restaurant=self.restaurant,name="Biryani",price=Decimal("100.00"))
+        self.client=APIClient()
+        self.client.force_authenticate(user=self.cashier)
+        data=self.client.post("/api/orders/",{"items":[{"id":self.menu_item.id,"quantity":2}],"customer_name":"Customer A","customer_phone":"9898988787"},format="json").data
+        self.order_id=data["id"]
+        self.client.post(f"/api/orders/{self.order_id}/pay/",{"payment_method":"upi"},format="json")
+
+    def test_history_includes_snapshots_and_is_tenant_scoped(self):
+        response=self.client.get("/api/orders/history/")
+        self.assertEqual(response.status_code,200,response.data)
+        self.assertEqual(response.data["count"],1)
+        row=response.data["results"][0]
+        self.assertEqual(row["items"][0]["name"],"Biryani")
+        self.assertEqual(row["payment_method"],"upi")
+        self.assertEqual(self.client.get("/api/orders/history/?q=nonexistent").data["count"],0)
+        self.client.force_authenticate(user=self.outsider)
+        self.assertEqual(self.client.get("/api/orders/history/").data["count"],0)
+
+    def test_reports_only_for_admin_and_only_paid_tenant_orders(self):
+        self.assertEqual(self.client.get("/api/reports/sales/").status_code,403)
+        self.client.force_authenticate(user=self.owner)
+        report=self.client.get("/api/reports/sales/")
+        self.assertEqual(report.status_code,200,report.data)
+        self.assertEqual(report.data["orders"],1)
+        self.assertEqual(Decimal(report.data["subtotal"]),Decimal("200.00"))
+        self.assertEqual(report.data["payment_methods"][0]["method"],"upi")
+        self.assertEqual(self.client.get("/api/reports/sales/?start=2026-11-30&end=2026-11-01").status_code,400)
