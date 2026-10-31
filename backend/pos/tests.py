@@ -152,7 +152,7 @@ class PosFlowTests(TestCase):
         self.assertEqual(self.client.get("/api/customers/suggest/?q=999").data,[])
         self.client.post(f"/api/orders/{order_id}/pay/",{"payment_method":"cash"},format="json")
         result=self.client.get("/api/customers/suggest/?q=999").data
-        self.assertEqual(result,[{"customer_phone":"9999999999","customer_name":"Guest"}])
+        self.assertEqual(result,[{"customer_phone":"9999999999","customer_name":"Guest","whatsapp_consent":False}])
         self.login(self.outsider)
         self.assertEqual(self.client.get("/api/customers/suggest/?q=999").data,[])
 
