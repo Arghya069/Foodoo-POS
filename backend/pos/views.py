@@ -106,7 +106,7 @@ def customer_lookup(request):
  phone=str(request.query_params.get("phone","")).strip()
  if not re.fullmatch(r"[+0-9 -]{8,20}",phone):return Response({"customer_name":""})
  last=Order.objects.filter(restaurant=m.restaurant,customer_phone=phone,status="paid").exclude(customer_name="").order_by("-paid_at").first()
- return Response({"customer_name":last.customer_name if last else ""})
+ return Response({"customer_name":last.customer_name if last else "","whatsapp_consent":bool(last.whatsapp_consent) if last else False})
 
 @api_view(["GET"])
 def customer_suggestions(request):
@@ -114,7 +114,7 @@ def customer_suggestions(request):
  if not m:return no_member()
  prefix=str(request.query_params.get("q","")).strip()
  if not re.fullmatch(r"[+0-9 -]{3,20}",prefix):return Response([])
- matches=Order.objects.filter(restaurant=m.restaurant,status="paid",customer_phone__startswith=prefix).exclude(customer_name="").exclude(customer_phone="").order_by("-paid_at").values("customer_phone","customer_name")[:100]
+ matches=Order.objects.filter(restaurant=m.restaurant,status="paid",customer_phone__startswith=prefix).exclude(customer_name="").exclude(customer_phone="").order_by("-paid_at").values("customer_phone","customer_name","whatsapp_consent")[:100]
  seen=set()
  suggestions=[]
  for x in matches:
