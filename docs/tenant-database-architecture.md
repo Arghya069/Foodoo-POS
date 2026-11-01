@@ -53,3 +53,24 @@ DATABASE_URL alone does not enable multi-tenant routing.
 
 A database-per-tenant rollout requires an isolated feature/architecture phase and
 should not be mixed into routine cashier UX changes.
+
+## Implemented opt-in routing foundation (November 2026)
+
+- Explicit `TENANT_DATABASE_URLS` JSON configuration registers additional database aliases.
+- `FOODOO_TENANT_HOSTS` maps trusted Host names to configured tenant identifiers.
+- `FOODOO_TENANT_ROUTING=true` activates host-based routing before session/auth middleware.
+- A ContextVar-scoped router sends authenticated POS queries, sessions and auth data to
+  the selected database; request context is cleared when the request completes.
+- Unregistered hosts return 404; unconfigured tenant IDs fail closed.
+- `python manage.py tenant_db <tenant_id> --migrate --confirm` migrates
+  an explicitly configured tenant database; without flags it only probes the connection.
+- CI creates two physical PostgreSQL databases and checks separate logins, menu,
+  order storage and rejection of unknown hostnames.
+
+**Compatibility:** Routing is disabled by default and the existing
+`DATABASE_URL` remains unchanged. Do not enable it for the existing 1More site
+before configuring a tenant database, testing its data and validating browser
+host/cookie behavior. At present identities and memberships are tenant-local.
+A central platform organization/identity registry, database provisioning
+automation, secret management and tested data migration are still required for
+full SaaS architecture. This is not yet production multi-tenancy.
