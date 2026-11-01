@@ -2,7 +2,10 @@ import os
 from pathlib import Path
 from django.core.exceptions import ImproperlyConfigured
 import dj_database_url
+from dotenv import load_dotenv
 BASE_DIR=Path(__file__).resolve().parent.parent
+# OS environment takes priority over local .env values (CI / cloud deployments).
+load_dotenv(BASE_DIR / '.env', override=False)
 DEBUG=os.getenv("DJANGO_DEBUG","false").lower()=="true"
 SECRET_KEY=os.getenv("DJANGO_SECRET_KEY","unsafe-development-placeholder")
 if not DEBUG and SECRET_KEY=="unsafe-development-placeholder": raise ImproperlyConfigured("DJANGO_SECRET_KEY required")
