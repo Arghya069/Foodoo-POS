@@ -177,7 +177,7 @@ def export_sales_report(request):
  if m.role!="admin":return Response({"detail":"Admin only"},status=403)
  first,last=report_window(request)
  if first is None:return Response({"detail":"Choose a valid date range up to 366 days."},status=400)
- fmt=request.query_params.get("format","csv")
+ fmt=request.query_params.get("file_type","csv")
  if fmt not in ("csv","xlsx"):return Response({"detail":"Export format must be csv or xlsx."},status=400)
  paid=Order.objects.filter(restaurant=m.restaurant,status="paid",paid_at__date__gte=first,paid_at__date__lte=last).order_by("paid_at","id")
  columns=["Receipt","Paid at (IST)","Customer name","Customer phone","Payment method","Subtotal","CGST","SGST","Total"]
