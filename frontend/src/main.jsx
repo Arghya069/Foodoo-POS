@@ -54,7 +54,7 @@ useEffect(()=>{
 },[tab,me,rangeStart,rangeEnd]);
 async function exportReport(format){
  try{
-  const qs=new URLSearchParams({start:rangeStart,end:rangeEnd,format});
+  const qs=new URLSearchParams({start:rangeStart,end:rangeEnd,file_type:format});
   const response=await fetch(API+"/reports/sales/export/?"+qs,{credentials:"same-origin"});
   if(!response.ok){const error=await response.json().catch(()=>({}));throw Error(error.detail||"Export failed")}
   const blob=await response.blob(),url=URL.createObjectURL(blob);
