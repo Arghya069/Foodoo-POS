@@ -85,7 +85,7 @@ def menu(request):
   serializer.is_valid(raise_exception=True)
   item=serializer.save(restaurant=m.restaurant)
   return Response(MenuItemSerializer(item).data,status=201)
- items=MenuItem.objects.filter(restaurant=m.restaurant,active=True).order_by("name")
+ items=MenuItem.objects.filter(restaurant=m.restaurant).order_by("name") if m.role=="admin" else MenuItem.objects.filter(restaurant=m.restaurant,active=True).order_by("name")
  return Response(MenuItemSerializer(items,many=True).data)
 
 @api_view(["PATCH"])
