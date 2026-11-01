@@ -270,3 +270,43 @@ class OrderHistoryReportTests(TestCase):
         self.assertEqual(len(list(csv.reader(StringIO(self.client.get("/api/reports/sales/export/?file_type=csv").content.decode("utf-8-sig"))))),1)
         self.client.force_authenticate(user=self.owner)
         self.assertEqual(self.client.get("/api/reports/sales/export/?file_type=pdf").status_code,400)
+
+class DailyTokenTests(TestCase):
+    def setUp(self):
+        self.restaurant=Restaurant.objects.create(name="Token Restaurant")
+        self.other=Restaurant.objects.create(name="Other Token Restaurant")
+        self.user=User.objects.create_user("tokenstaff",password="secret")
+        self.other_user=User.objects.create_user("other-tokenstaff",password="secret")
+        Membership.objects.create(user=self.user,restaurant=self.restaurant,role="staff")
+        Membership.objects.create(user=self.other_user,restaurant=self.other,role="staff")
+        self.item=MenuItem.objects.create(restaurant=self.restaurant,name="Rice",price=Decimal("50"))
+        self.other_item=MenuItem.objects.create(restaurant=self.other,name="Rice",price=Decimal("50"))
+        self.client=APIClient()
+
+    def test_daily_token_issuance_status_and_tenant_isolation(self):
+        self.client.force_authenticate(user=self.user)
+        a=self.client.post("/api/orders/",{"items":[{"id":self.item.pk,"quantity":1}]},format="json")
+        b=self.client.post("/api/orders/",{"items":[{"id":self.item.pk,"quantity":1}]},format="json")
+        self.assertEqual(a.status_code,201,a.data)
+        self.assertEqual(a.data["token_number"],1)
+        self.assertEqual(b.data["token_number"],2)
+        self.assertEqual(a.data["token_date"],b.data["token_date"])
+        self.assertEqual(self.client.get("/api/tokens/today/").data["last_issued"],2)
+        self.assertEqual(self.client.post("/api/tokens/today/",{"currently_serving":3},format="json").status_code,400)
+        self.assertEqual(self.client.post("/api/tokens/today/",{"currently_serving":1},format="json").status_code,200)
+        self.assertEqual(self.client.post("/api/tokens/today/",{"currently_serving":0},format="json").status_code,400)
+        self.client.force_authenticate(user=self.other_user)
+        self.assertEqual(self.client.get("/api/tokens/today/").data["last_issued"],0)
+        other=self.client.post("/api/orders/",{"items":[{"id":self.other_item.pk,"quantity":1}]},format="json")
+        self.assertEqual(other.data["token_number"],1)
+
+    def test_branch_identity_defaults_and_admin_edit(self):
+        self.assertEqual(self.restaurant.branch_type,"main")
+        self.assertEqual(self.restaurant.branch_code,"main")
+        self.client.force_authenticate(user=self.user)
+        self.assertEqual(self.client.patch("/api/restaurant/",{"branch_type":"branch"},format="json").status_code,403)
+        self.user.pos_membership.role="admin"
+        self.user.pos_membership.save()
+        result=self.client.patch("/api/restaurant/",{"branch_type":"branch","branch_name":"Brahmapur","branch_code":"berhampur-01"},format="json")
+        self.assertEqual(result.status_code,200,result.data)
+        self.assertEqual(result.data["branch_type"],"branch")
