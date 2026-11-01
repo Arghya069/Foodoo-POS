@@ -98,7 +98,7 @@ jobs:
           psql -h localhost -U foodoo -d postgres -c 'CREATE DATABASE foodoo_tenant_second'
       - name: Migrate and smoke-test two tenant databases
         env:
-          DJANGO_ALLOWED_HOSTS: "first.example.test,second.example.test"
+          DJANGO_ALLOWED_HOSTS: "first.example.test,second.example.test,unknown.example.test"
           FOODOO_TENANT_ROUTING: "true"
           FOODOO_TENANT_HOSTS: '{"first.example.test":"first","second.example.test":"second"}'
           TENANT_DATABASE_URLS: '{"first":"postgresql://foodoo:ci-only-password@localhost:5432/foodoo_tenant_first","second":"postgresql://foodoo:ci-only-password@localhost:5432/foodoo_tenant_second"}'
