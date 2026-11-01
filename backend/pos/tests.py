@@ -389,3 +389,23 @@ class FullRestaurantWorkflowTests(TestCase):
         exported=client.get("/api/reports/sales/export/?file_type=csv")
         self.assertEqual(exported.status_code,200)
         self.assertIn(b"420.00",exported.content)
+
+class TenantRegistryTests(TestCase):
+    def test_explicit_alias_and_unknown_tenant_fail_closed(self):
+        from django.test import override_settings
+        from config.tenant_registry import resolve_tenant,tenant_alias
+        from django.core.exceptions import ImproperlyConfigured
+        self.assertEqual(tenant_alias("one_more"),"tenant_one_more")
+        with self.assertRaises(ValueError):
+            tenant_alias("../postgres")
+        with self.assertRaises(LookupError):
+            resolve_tenant("unknown")
+        db={"default":{"ENGINE":"django.db.backends.sqlite3","NAME":":memory:"},
+            "tenant_one_more":{"ENGINE":"django.db.backends.postgresql","NAME":"foodoo_one_more"}}
+        with override_settings(DATABASES=db):
+            tenant=resolve_tenant("one_more")
+            self.assertEqual(tenant.alias,"tenant_one_more")
+            self.assertEqual(tenant.database_name,"foodoo_one_more")
+        with override_settings(DATABASES={"default":db["default"],"tenant_one_more":db["default"]}):
+            with self.assertRaises(ImproperlyConfigured):
+                resolve_tenant("one_more")
