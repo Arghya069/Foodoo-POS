@@ -12,7 +12,7 @@ SECRET_KEY=os.getenv("DJANGO_SECRET_KEY","unsafe-development-placeholder")
 if not DEBUG and SECRET_KEY=="unsafe-development-placeholder": raise ImproperlyConfigured("DJANGO_SECRET_KEY required")
 ALLOWED_HOSTS=[s.strip() for s in os.getenv("DJANGO_ALLOWED_HOSTS","localhost,127.0.0.1").split(",") if s.strip()]
 INSTALLED_APPS=["django.contrib.auth","django.contrib.contenttypes","django.contrib.sessions","django.contrib.staticfiles","rest_framework","corsheaders","pos"]
-MIDDLEWARE=["django.middleware.security.SecurityMiddleware","whitenoise.middleware.WhiteNoiseMiddleware","corsheaders.middleware.CorsMiddleware","django.contrib.sessions.middleware.SessionMiddleware","django.middleware.common.CommonMiddleware","django.middleware.csrf.CsrfViewMiddleware","django.contrib.auth.middleware.AuthenticationMiddleware"]
+MIDDLEWARE=["django.middleware.security.SecurityMiddleware","config.tenant_routing.TenantHostMiddleware","whitenoise.middleware.WhiteNoiseMiddleware","corsheaders.middleware.CorsMiddleware","django.contrib.sessions.middleware.SessionMiddleware","django.middleware.common.CommonMiddleware","django.middleware.csrf.CsrfViewMiddleware","django.contrib.auth.middleware.AuthenticationMiddleware"]
 ROOT_URLCONF="config.urls"
 TEMPLATES=[]
 WSGI_APPLICATION="config.wsgi.application"
@@ -51,3 +51,15 @@ SESSION_COOKIE_AGE=8*60*60
 SESSION_SAVE_EVERY_REQUEST=True
 
 CSRF_TRUSTED_ORIGINS=[x.strip() for x in os.getenv("CSRF_TRUSTED_ORIGINS","http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
+
+# Opt-in database-per-tenant routing: OFF until multiple databases have been
+# provisioned and isolated login flows have passed acceptance tests.
+FOODOO_TENANT_ROUTING=os.getenv("FOODOO_TENANT_ROUTING","false").lower()=="true"
+try:
+ FOODOO_TENANT_HOSTS=json.loads(os.getenv("FOODOO_TENANT_HOSTS","{}"))
+ if not isinstance(FOODOO_TENANT_HOSTS,dict):raise ValueError()
+except (ValueError,TypeError):
+ raise ImproperlyConfigured("FOODOO_TENANT_HOSTS must be a JSON object")
+if FOODOO_TENANT_ROUTING and not FOODOO_TENANT_HOSTS:
+ raise ImproperlyConfigured("At least one tenant hostname is required with tenant routing")
+DATABASE_ROUTERS=["config.tenant_routing.TenantDatabaseRouter"]
