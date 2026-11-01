@@ -36,3 +36,5 @@ select{display:block;width:100%;padding:12px;border:1px solid #dbe4e2;border-rad
 .products article p{margin:9px 0}
 .products article p:last-of-type{margin-top:auto;padding-top:8px;font-weight:700}
 .products article>button{align-self:flex-start;margin-top:6px}
+
+.token-queue{border:1px solid #cce4dc;background:#f0faf6;border-radius:12px;padding:14px}.token-queue p{font-size:13px;display:flex;gap:7px;align-items:center;flex-wrap:wrap}.token-queue strong,.order-token{color:#126b5b}.token-controls{display:flex;gap:8px;align-items:center}.token-controls input{margin:0;min-width:0;flex:1}.token-controls button{padding:11px}.order-token{font-size:24px}
