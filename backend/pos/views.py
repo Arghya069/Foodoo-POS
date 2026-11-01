@@ -185,7 +185,7 @@ def sales_report(request):
 def export_sales_report(request):
  m=membership(request)
  if not m:return no_member()
- if m.role!="admin":return Response({"detail":"Admin only"},status=403)
+ if not reporting_role(m):return forbidden()
  first,last=report_window(request)
  if first is None:return Response({"detail":"Choose a valid date range up to 366 days."},status=400)
  fmt=request.query_params.get("file_type","csv")
