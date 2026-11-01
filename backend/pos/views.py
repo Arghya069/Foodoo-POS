@@ -29,6 +29,9 @@ def membership(request):
  return Membership.objects.select_related("restaurant").filter(user=request.user).first()
 def money(v): return Decimal(v).quantize(Decimal(".01"),rounding=ROUND_HALF_UP)
 def no_member():return Response({"detail":"No POS membership"},status=403)
+def cashier_role(m):return m.role in ("admin","staff","cashier")
+def reporting_role(m):return m.role in ("admin","partner")
+def forbidden():return Response({"detail":"This role cannot perform this action."},status=403)
 @api_view(["GET"])
 def me(request):
  m=membership(request)
@@ -89,6 +92,7 @@ def menu(request):
   serializer.is_valid(raise_exception=True)
   item=serializer.save(restaurant=m.restaurant)
   return Response(MenuItemSerializer(item).data,status=201)
+ if not cashier_role(m):return forbidden()
  items=MenuItem.objects.filter(restaurant=m.restaurant).order_by("name") if m.role=="admin" else MenuItem.objects.filter(restaurant=m.restaurant,active=True).order_by("name")
  return Response(MenuItemSerializer(items,many=True).data)
 
@@ -108,6 +112,7 @@ def menu_detail(request,pk):
 def customer_lookup(request):
  m=membership(request)
  if not m:return no_member()
+ if not cashier_role(m):return forbidden()
  phone=str(request.query_params.get("phone","")).strip()
  if not re.fullmatch(r"[+0-9 -]{8,20}",phone):return Response({"customer_name":""})
  last=Order.objects.filter(restaurant=m.restaurant,customer_phone=phone,status="paid").exclude(customer_name="").order_by("-paid_at").first()
@@ -117,6 +122,7 @@ def customer_lookup(request):
 def customer_suggestions(request):
  m=membership(request)
  if not m:return no_member()
+ if not cashier_role(m):return forbidden()
  prefix=str(request.query_params.get("q","")).strip()
  if not re.fullmatch(r"[+0-9 -]{3,20}",prefix):return Response([])
  matches=Order.objects.filter(restaurant=m.restaurant,status="paid",customer_phone__startswith=prefix).exclude(customer_name="").exclude(customer_phone="").order_by("-paid_at").values("customer_phone","customer_name","whatsapp_consent")[:100]
@@ -144,6 +150,7 @@ def report_window(request):
 def order_history(request):
  m=membership(request)
  if not m:return no_member()
+ if not cashier_role(m):return forbidden()
  first,last=report_window(request)
  if first is None:return Response({"detail":"Choose a valid date range up to 366 days."},status=400)
  qs=Order.objects.filter(restaurant=m.restaurant,created_at__date__gte=first,created_at__date__lte=last).order_by("-created_at","-id")
@@ -165,7 +172,7 @@ def order_history(request):
 def sales_report(request):
  m=membership(request)
  if not m:return no_member()
- if m.role!="admin":return Response({"detail":"Admin only"},status=403)
+ if not reporting_role(m):return forbidden()
  first,last=report_window(request)
  if first is None:return Response({"detail":"Choose a valid date range up to 366 days."},status=400)
  paid=Order.objects.filter(restaurant=m.restaurant,status="paid",paid_at__date__gte=first,paid_at__date__lte=last)
@@ -223,6 +230,7 @@ def export_sales_report(request):
 def token_status(request):
  m=membership(request)
  if not m:return no_member()
+ if not cashier_role(m):return forbidden()
  day=timezone.localdate()
  if request.method=="GET":
   counter=DailyTokenCounter.objects.filter(restaurant=m.restaurant,service_date=day).first()
@@ -241,6 +249,7 @@ def token_status(request):
 def orders(request):
  m=membership(request)
  if not m:return no_member()
+ if not cashier_role(m):return forbidden()
  if request.method=="GET":return Response([{"id":o.pk,"status":o.status,"total":str(o.total),"receipt_number":o.receipt_number} for o in Order.objects.filter(restaurant=m.restaurant).order_by("-id")[:50]])
  phone=str(request.data.get("customer_phone","")).strip()
  name=str(request.data.get("customer_name","")).strip()
@@ -274,6 +283,7 @@ def orders(request):
 def pay(request,pk):
  m=membership(request)
  if not m:return no_member()
+ if not cashier_role(m):return forbidden()
  with transaction.atomic():
   try:o=Order.objects.select_for_update().get(pk=pk,restaurant=m.restaurant)
   except Order.DoesNotExist:return Response({"detail":"Not found"},status=404)
@@ -372,6 +382,7 @@ def thermal_receipt_pdf(order):
 def receipt(request,pk):
  m=membership(request)
  if not m:return no_member()
+ if not cashier_role(m):return forbidden()
  try:o=Order.objects.select_related("restaurant").prefetch_related("lines").get(pk=pk,restaurant=m.restaurant,status="paid")
  except Order.DoesNotExist:return Response({"detail":"Receipt unavailable"},status=404)
  return FileResponse(thermal_receipt_pdf(o),content_type="application/pdf",filename=f"{o.receipt_number}.pdf")
