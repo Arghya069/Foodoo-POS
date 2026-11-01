@@ -1,5 +1,5 @@
 from django.contrib.auth import get_user_model
-from django.db import transaction
+from django.db import transaction,router as django_router
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from .models import Membership,Order
@@ -31,7 +31,7 @@ def staff_directory(request):
         return Response({"password":"Use a password of at least 10 characters, different from username."},status=400)
     if User.objects.filter(username__iexact=username).exists():
         return Response({"username":"Username is already taken."},status=400)
-    with transaction.atomic():
+    with transaction.atomic(using=django_router.db_for_write(Membership)):
         user=User.objects.create_user(username=username,password=password,first_name=str(request.data.get("first_name","")).strip()[:150])
         m=Membership.objects.create(user=user,restaurant=admin.restaurant,role=role)
     return Response(public_member(m),status=201)
@@ -40,7 +40,7 @@ def staff_directory(request):
 def staff_detail(request,pk):
     admin=admin_membership(request)
     if not admin:return Response({"detail":"Admin only"},status=403)
-    with transaction.atomic():
+    with transaction.atomic(using=django_router.db_for_write(Membership)):
         try:m=Membership.objects.select_for_update().select_related("user").get(pk=pk,restaurant=admin.restaurant)
         except Membership.DoesNotExist:return Response({"detail":"Not found"},status=404)
         user=m.user
