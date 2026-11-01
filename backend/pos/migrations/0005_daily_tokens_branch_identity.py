@@ -13,6 +13,7 @@ class Migration(migrations.Migration):
    ("id",models.BigAutoField(auto_created=True,primary_key=True,serialize=False,verbose_name="ID")),
    ("service_date",models.DateField()),
    ("last_number",models.PositiveIntegerField(default=0)),
+   ("serving_number",models.PositiveIntegerField(default=0)),
    ("restaurant",models.ForeignKey(on_delete=django.db.models.deletion.PROTECT,to="pos.restaurant")),
   ]),
   migrations.AddConstraint(model_name="dailytokencounter",constraint=models.UniqueConstraint(fields=("restaurant","service_date"),name="unique_daily_token_counter")),
