@@ -5,7 +5,7 @@ import re
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
-from django.db import transaction
+from django.db import transaction,router as django_router
 from django.db.models import F,Sum,Count
 from django.http import FileResponse,HttpResponse
 from io import BytesIO
@@ -237,7 +237,7 @@ def token_status(request):
   return Response({"date":day.isoformat(),"last_issued":counter.last_number if counter else 0,"currently_serving":counter.serving_number if counter else 0})
  try: number=int(request.data.get("currently_serving"))
  except (TypeError,ValueError):return Response({"detail":"Enter a valid token number."},status=400)
- with transaction.atomic():
+ with transaction.atomic(using=django_router.db_for_write(Order)):
   Restaurant.objects.select_for_update().get(pk=m.restaurant_id)
   counter,_=DailyTokenCounter.objects.get_or_create(restaurant=m.restaurant,service_date=day)
   if number<counter.serving_number or number>counter.last_number:return Response({"detail":"Current token cannot move backwards or exceed issued tokens."},status=400)
@@ -269,7 +269,7 @@ def orders(request):
  subtotal=money(sum((items[k].price*v for k,v in quantities.items()),Decimal(0)))
  r=m.restaurant
  cgst=money(subtotal*r.cgst_rate/100);sgst=money(subtotal*r.sgst_rate/100)
- with transaction.atomic():
+ with transaction.atomic(using=django_router.db_for_write(Order)):
   # Lock the restaurant row so concurrent cashiers cannot issue duplicate tokens.
   Restaurant.objects.select_for_update().get(pk=r.pk)
   token_day=timezone.localdate()
@@ -284,7 +284,7 @@ def pay(request,pk):
  m=membership(request)
  if not m:return no_member()
  if not cashier_role(m):return forbidden()
- with transaction.atomic():
+ with transaction.atomic(using=django_router.db_for_write(Order)):
   try:o=Order.objects.select_for_update().get(pk=pk,restaurant=m.restaurant)
   except Order.DoesNotExist:return Response({"detail":"Not found"},status=404)
   if o.status=="draft":
