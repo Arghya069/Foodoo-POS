@@ -23,7 +23,7 @@ from rest_framework.decorators import api_view,permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
-from .models import Restaurant,Membership,MenuItem,Order,OrderLine
+from .models import Restaurant,Membership,MenuItem,Order,OrderLine,DailyTokenCounter
 
 def membership(request):
  return Membership.objects.select_related("restaurant").filter(user=request.user).first()
@@ -40,8 +40,12 @@ def restaurant(request):
  r=m.restaurant
  if request.method=="PATCH":
   if m.role!="admin":return Response({"detail":"Admin only"},status=403)
-  for k in ("name","address","contact_phone","gstin"):
+  for k in ("name","address","contact_phone","gstin","branch_name","branch_code"):
    if k in request.data:setattr(r,k,str(request.data[k]).strip())
+  if "branch_type" in request.data:
+   if request.data["branch_type"] not in ("main","branch"):return Response({"branch_type":"Choose Main or Branch."},status=400)
+   r.branch_type=request.data["branch_type"]
+  if not re.fullmatch(r"[a-z0-9-]{1,48}",r.branch_code):return Response({"branch_code":"Use lowercase letters, numbers and hyphens."},status=400)
   for k in ("cgst_rate","sgst_rate"):
    if k in request.data:
     try:v=Decimal(str(request.data[k]));assert v.is_finite() and Decimal("0")<=v<=Decimal("100") and v.as_tuple().exponent>=-2
@@ -53,7 +57,7 @@ def restaurant(request):
     return Response({"logo_data":"Use a small PNG or JPEG logo (maximum about 160 KB)."},status=400)
    r.logo_data=logo
   r.save()
- return Response({"id":str(r.id),"name":r.name,"address":r.address,"contact_phone":r.contact_phone,"gstin":r.gstin,"logo_data":r.logo_data,"cgst_rate":str(r.cgst_rate),"sgst_rate":str(r.sgst_rate)})
+ return Response({"id":str(r.id),"name":r.name,"address":r.address,"contact_phone":r.contact_phone,"gstin":r.gstin,"logo_data":r.logo_data,"branch_type":r.branch_type,"branch_name":r.branch_name,"branch_code":r.branch_code,"cgst_rate":str(r.cgst_rate),"sgst_rate":str(r.sgst_rate)})
 class MenuItemSerializer(serializers.ModelSerializer):
  class Meta:
   model=MenuItem
@@ -155,7 +159,7 @@ def order_history(request):
  if page>10000:return Response({"detail":"Invalid page."},status=400)
  count=qs.count()
  subset=list(qs.prefetch_related("lines")[(page-1)*25:page*25])
- return Response({"count":count,"page":page,"page_size":25,"results":[{"id":o.id,"status":o.status,"receipt_number":o.receipt_number,"customer_name":o.customer_name,"customer_phone":o.customer_phone,"payment_method":o.payment_method,"subtotal":str(o.subtotal),"cgst":str(o.cgst_amount),"sgst":str(o.sgst_amount),"total":str(o.total),"created_at":o.created_at.isoformat(),"paid_at":o.paid_at.isoformat() if o.paid_at else None,"items":[{"name":x.name_snapshot,"quantity":x.quantity,"unit_price":str(x.unit_price),"total":str(x.line_total)} for x in o.lines.all()]} for o in subset]})
+ return Response({"count":count,"page":page,"page_size":25,"results":[{"id":o.id,"status":o.status,"receipt_number":o.receipt_number,"token_number":o.token_number,"token_date":o.token_date.isoformat() if o.token_date else None,"customer_name":o.customer_name,"customer_phone":o.customer_phone,"payment_method":o.payment_method,"subtotal":str(o.subtotal),"cgst":str(o.cgst_amount),"sgst":str(o.sgst_amount),"total":str(o.total),"created_at":o.created_at.isoformat(),"paid_at":o.paid_at.isoformat() if o.paid_at else None,"items":[{"name":x.name_snapshot,"quantity":x.quantity,"unit_price":str(x.unit_price),"total":str(x.line_total)} for x in o.lines.all()]} for o in subset]})
 
 @api_view(["GET"])
 def sales_report(request):
@@ -216,6 +220,24 @@ def export_sales_report(request):
  return response
 
 @api_view(["GET","POST"])
+def token_status(request):
+ m=membership(request)
+ if not m:return no_member()
+ day=timezone.localdate()
+ if request.method=="GET":
+  counter=DailyTokenCounter.objects.filter(restaurant=m.restaurant,service_date=day).first()
+  return Response({"date":day.isoformat(),"last_issued":counter.last_number if counter else 0,"currently_serving":counter.serving_number if counter else 0})
+ try: number=int(request.data.get("currently_serving"))
+ except (TypeError,ValueError):return Response({"detail":"Enter a valid token number."},status=400)
+ with transaction.atomic():
+  Restaurant.objects.select_for_update().get(pk=m.restaurant_id)
+  counter,_=DailyTokenCounter.objects.get_or_create(restaurant=m.restaurant,service_date=day)
+  if number<counter.serving_number or number>counter.last_number:return Response({"detail":"Current token cannot move backwards or exceed issued tokens."},status=400)
+  counter.serving_number=number
+  counter.save(update_fields=["serving_number"])
+ return Response({"date":day.isoformat(),"last_issued":counter.last_number,"currently_serving":counter.serving_number})
+
+@api_view(["GET","POST"])
 def orders(request):
  m=membership(request)
  if not m:return no_member()
@@ -239,9 +261,15 @@ def orders(request):
  r=m.restaurant
  cgst=money(subtotal*r.cgst_rate/100);sgst=money(subtotal*r.sgst_rate/100)
  with transaction.atomic():
-  o=Order.objects.create(restaurant=r,created_by=request.user,customer_name=name,customer_phone=phone,whatsapp_consent=request.data.get("whatsapp_consent") is True,subtotal=subtotal,cgst_rate=r.cgst_rate,sgst_rate=r.sgst_rate,cgst_amount=cgst,sgst_amount=sgst,total=subtotal+cgst+sgst)
+  # Lock the restaurant row so concurrent cashiers cannot issue duplicate tokens.
+  Restaurant.objects.select_for_update().get(pk=r.pk)
+  token_day=timezone.localdate()
+  counter,_=DailyTokenCounter.objects.get_or_create(restaurant=r,service_date=token_day)
+  counter.last_number+=1
+  counter.save(update_fields=["last_number"])
+  o=Order.objects.create(restaurant=r,token_date=token_day,token_number=counter.last_number,created_by=request.user,customer_name=name,customer_phone=phone,whatsapp_consent=request.data.get("whatsapp_consent") is True,subtotal=subtotal,cgst_rate=r.cgst_rate,sgst_rate=r.sgst_rate,cgst_amount=cgst,sgst_amount=sgst,total=subtotal+cgst+sgst)
   OrderLine.objects.bulk_create([OrderLine(order=o,menu_item=items[k],name_snapshot=items[k].name,unit_price=items[k].price,quantity=q,line_total=money(items[k].price*q)) for k,q in quantities.items()])
- return Response({"id":o.pk,"subtotal":str(subtotal),"cgst":str(cgst),"sgst":str(sgst),"total":str(o.total)},status=201)
+ return Response({"id":o.pk,"subtotal":str(subtotal),"cgst":str(cgst),"sgst":str(sgst),"total":str(o.total),"token_number":o.token_number,"token_date":o.token_date.isoformat()},status=201)
 @api_view(["POST"])
 def pay(request,pk):
  m=membership(request)
@@ -253,7 +281,7 @@ def pay(request,pk):
    method=request.data.get("payment_method")
    if method not in ("cash","card","upi"):return Response({"payment_method":"Choose Cash, Card or UPI."},status=400)
    o.status="paid";o.payment_method=method;o.paid_at=timezone.now();o.receipt_number="FD-"+uuid.uuid4().hex[:12].upper();o.save(update_fields=["status","payment_method","paid_at","receipt_number"])
- return Response({"id":o.pk,"status":o.status,"receipt_number":o.receipt_number,"total":str(o.total),"payment_method":o.payment_method,"whatsapp_consent":o.whatsapp_consent})
+ return Response({"id":o.pk,"status":o.status,"receipt_number":o.receipt_number,"total":str(o.total),"payment_method":o.payment_method,"whatsapp_consent":o.whatsapp_consent,"token_number":o.token_number,"token_date":o.token_date.isoformat() if o.token_date else None})
 def thermal_receipt_pdf(order):
  from reportlab.pdfbase.pdfmetrics import stringWidth
  width=57*mm
@@ -278,6 +306,7 @@ def thermal_receipt_pdf(order):
  if order.restaurant.gstin:text("GSTIN: "+order.restaurant.gstin,7,False,True)
  entries.append(("gap",5))
  text("TAX INVOICE / RECEIPT",8,True,True)
+ if order.token_number:text("TOKEN #"+str(order.token_number),11,True,True)
  text("No: "+order.receipt_number)
  text("Date: "+timezone.localtime(order.paid_at).strftime("%d-%m-%Y %H:%M"))
  if order.customer_name:text("Customer: "+order.customer_name)
