@@ -310,3 +310,40 @@ class DailyTokenTests(TestCase):
         result=self.client.patch("/api/restaurant/",{"branch_type":"branch","branch_name":"Brahmapur","branch_code":"berhampur-01"},format="json")
         self.assertEqual(result.status_code,200,result.data)
         self.assertEqual(result.data["branch_type"],"branch")
+
+class StaffRoleTests(TestCase):
+    def setUp(self):
+        self.r=Restaurant.objects.create(name="Staff Restaurant")
+        self.owner=User.objects.create_user("team-owner",password="test-pass")
+        Membership.objects.create(user=self.owner,restaurant=self.r,role="admin")
+        self.client=APIClient()
+        self.client.force_authenticate(user=self.owner)
+
+    def test_staff_creation_role_permissions_and_disabling(self):
+        response=self.client.post("/api/staff/",{"username":"chef-new","password":"secure-password-123","role":"chef"},format="json")
+        self.assertEqual(response.status_code,201,response.data)
+        self.assertNotIn("password",response.data)
+        chef=User.objects.get(username="chef-new")
+        self.client.force_authenticate(user=chef)
+        self.assertEqual(self.client.get("/api/kitchen/").status_code,200)
+        self.assertEqual(self.client.get("/api/staff/").status_code,403)
+        self.assertEqual(self.client.get("/api/menu/").status_code,403)
+        self.assertEqual(self.client.get("/api/orders/history/").status_code,403)
+        self.assertEqual(self.client.get("/api/reports/sales/").status_code,403)
+        self.client.force_authenticate(user=self.owner)
+        self.assertEqual(self.client.patch(f'/api/staff/{response.data["id"]}/',{"active":False},format="json").status_code,200)
+        self.assertFalse(User.objects.get(pk=chef.pk).is_active)
+
+    def test_partner_only_reports_and_admin_self_protection(self):
+        p=self.client.post("/api/staff/",{"username":"partner-new","password":"secure-password-123","role":"partner"},format="json")
+        self.assertEqual(p.status_code,201,p.data)
+        self.client.force_authenticate(user=User.objects.get(username="partner-new"))
+        self.assertEqual(self.client.get("/api/reports/sales/").status_code,200)
+        self.assertEqual(self.client.get("/api/reports/sales/export/?file_type=csv").status_code,200)
+        self.assertEqual(self.client.get("/api/tokens/today/").status_code,403)
+        self.assertEqual(self.client.get("/api/restaurant/").status_code,200)
+        self.assertEqual(self.client.patch("/api/restaurant/",{"name":"Bad"},format="json").status_code,403)
+        self.client.force_authenticate(user=self.owner)
+        mid=Membership.objects.get(user=self.owner).pk
+        self.assertEqual(self.client.patch(f"/api/staff/{mid}/",{"active":False},format="json").status_code,400)
+        self.assertEqual(self.client.patch(f"/api/staff/{mid}/",{"role":"partner"},format="json").status_code,400)
