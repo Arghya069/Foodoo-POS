@@ -90,3 +90,19 @@ jobs:
         run: python manage.py migrate --noinput
       - name: Test checkout and tenant isolation on PostgreSQL
         run: python manage.py test --verbosity 2
+      - name: Provision two independent PostgreSQL tenant databases
+        env:
+          PGPASSWORD: ci-only-password
+        run: |
+          psql -h localhost -U foodoo -d postgres -c 'CREATE DATABASE foodoo_tenant_first'
+          psql -h localhost -U foodoo -d postgres -c 'CREATE DATABASE foodoo_tenant_second'
+      - name: Migrate and smoke-test two tenant databases
+        env:
+          DJANGO_ALLOWED_HOSTS: "first.example.test,second.example.test"
+          FOODOO_TENANT_ROUTING: "true"
+          FOODOO_TENANT_HOSTS: '{"first.example.test":"first","second.example.test":"second"}'
+          TENANT_DATABASE_URLS: '{"first":"postgresql://foodoo:ci-only-password@localhost:5432/foodoo_tenant_first","second":"postgresql://foodoo:ci-only-password@localhost:5432/foodoo_tenant_second"}'
+        run: |
+          python manage.py tenant_db first --migrate --confirm
+          python manage.py tenant_db second --migrate --confirm
+          python -m pos.tenant_isolation_smoke
