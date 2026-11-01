@@ -7,7 +7,7 @@ from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from django.db import transaction
 from django.db.models import F,Sum,Count
-from django.http import FileResponse
+from django.http import FileResponse,HttpResponse
 from io import BytesIO
 from xml.sax.saxutils import escape as xml_escape
 from reportlab.platypus import SimpleDocTemplate,Paragraph,Table,TableStyle,Spacer
@@ -169,6 +169,51 @@ def sales_report(request):
  methods=list(paid.values("payment_method").annotate(orders=Count("id"),revenue=Sum("total")).order_by("payment_method"))
  daily=list(paid.values("paid_at__date").annotate(orders=Count("id"),revenue=Sum("total")).order_by("paid_at__date"))
  return Response({"start":first.isoformat(),"end":last.isoformat(),"orders":totals["orders"],"subtotal":str(totals["subtotal"] or 0),"cgst":str(totals["cgst"] or 0),"sgst":str(totals["sgst"] or 0),"revenue":str(totals["revenue"] or 0),"payment_methods":[{"method":x["payment_method"],"orders":x["orders"],"revenue":str(x["revenue"])} for x in methods],"daily":[{"date":x["paid_at__date"].isoformat(),"orders":x["orders"],"revenue":str(x["revenue"])} for x in daily]})
+
+@api_view(["GET"])
+def export_sales_report(request):
+ m=membership(request)
+ if not m:return no_member()
+ if m.role!="admin":return Response({"detail":"Admin only"},status=403)
+ first,last=report_window(request)
+ if first is None:return Response({"detail":"Choose a valid date range up to 366 days."},status=400)
+ fmt=request.query_params.get("format","csv")
+ if fmt not in ("csv","xlsx"):return Response({"detail":"Export format must be csv or xlsx."},status=400)
+ paid=Order.objects.filter(restaurant=m.restaurant,status="paid",paid_at__date__gte=first,paid_at__date__lte=last).order_by("paid_at","id")
+ columns=["Receipt","Paid at (IST)","Customer name","Customer phone","Payment method","Subtotal","CGST","SGST","Total"]
+ rows=[]
+ for o in paid.iterator():
+  rows.append([o.receipt_number or "",timezone.localtime(o.paid_at).strftime("%Y-%m-%d %H:%M") if o.paid_at else "",o.customer_name,o.customer_phone,o.payment_method,o.subtotal,o.cgst_amount,o.sgst_amount,o.total])
+ filename=f"foodoo-sales-{first.isoformat()}-to-{last.isoformat()}.{fmt}"
+ if fmt=="csv":
+  import csv
+  from io import StringIO
+  output=StringIO()
+  writer=csv.writer(output)
+  writer.writerow(columns)
+  for row in rows:
+   # Keep user-supplied cell data from becoming spreadsheet formulas.
+   writer.writerow(["'"+v if isinstance(v,str) and v.startswith(("=","+","-","@")) else v for v in row])
+  response=HttpResponse("\ufeff"+output.getvalue(),content_type="text/csv; charset=utf-8")
+ else:
+  from openpyxl import Workbook
+  from openpyxl.styles import Font,PatternFill
+  wb=Workbook()
+  ws=wb.active;ws.title="Sales"
+  ws.append(columns)
+  for row in rows:
+   ws.append(["'"+v if isinstance(v,str) and v.startswith(("=","+","-","@")) else v for v in row])
+  ws.freeze_panes="A2";ws.auto_filter.ref=ws.dimensions
+  for cell in ws[1]:
+   cell.font=Font(bold=True,color="FFFFFF")
+   cell.fill=PatternFill(fill_type="solid",fgColor="126B5B")
+  for col,width in {"A":23,"B":23,"C":23,"D":20,"E":17,"F":17,"G":17,"H":17,"I":17}.items():ws.column_dimensions[col].width=width
+  for row in ws.iter_rows(min_row=2,min_col=6,max_col=9):
+   for cell in row:cell.number_format='#,##0.00'
+  output=BytesIO();wb.save(output)
+  response=HttpResponse(output.getvalue(),content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+ response["Content-Disposition"]=f'attachment; filename="{filename}"'
+ return response
 
 @api_view(["GET","POST"])
 def orders(request):
