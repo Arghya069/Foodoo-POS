@@ -18,7 +18,7 @@ class Restaurant(models.Model):
 class Membership(models.Model):
  user=models.OneToOneField(User,on_delete=models.CASCADE,related_name="pos_membership")
  restaurant=models.ForeignKey(Restaurant,on_delete=models.PROTECT)
- role=models.CharField(max_length=10,choices=[("admin","Admin"),("staff","Staff")])
+ role=models.CharField(max_length=10,choices=[("admin","Admin"),("staff","Cashier (legacy)"),("cashier","Cashier"),("chef","Chef"),("partner","Partner / guest")])
 class MenuItem(models.Model):
  restaurant=models.ForeignKey(Restaurant,on_delete=models.PROTECT)
  name=models.CharField(max_length=160)
