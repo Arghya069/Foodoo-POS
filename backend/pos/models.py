@@ -34,6 +34,7 @@ class DailyTokenCounter(models.Model):
  restaurant=models.ForeignKey(Restaurant,on_delete=models.PROTECT)
  service_date=models.DateField()
  last_number=models.PositiveIntegerField(default=0)
+ serving_number=models.PositiveIntegerField(default=0)
  class Meta:
   constraints=[models.UniqueConstraint(fields=["restaurant","service_date"],name="unique_daily_token_counter")]
 
