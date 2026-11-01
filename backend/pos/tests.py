@@ -409,3 +409,27 @@ class TenantRegistryTests(TestCase):
         with override_settings(DATABASES={"default":db["default"],"tenant_one_more":db["default"]}):
             with self.assertRaises(ImproperlyConfigured):
                 resolve_tenant("one_more")
+
+class TenantHostRoutingTests(TestCase):
+    def test_two_hosts_choose_distinct_configured_database_aliases(self):
+        from django.test import RequestFactory,override_settings
+        from django.http import JsonResponse
+        from config.tenant_routing import TenantHostMiddleware,TenantDatabaseRouter,current_database
+        dbs={"default":{"ENGINE":"django.db.backends.sqlite3","NAME":":memory:"},
+             "tenant_first":{"ENGINE":"django.db.backends.postgresql","NAME":"foodoo_first"},
+             "tenant_second":{"ENGINE":"django.db.backends.postgresql","NAME":"foodoo_second"}}
+        seen=[]
+        def response(request):
+            seen.append((request.tenant_id,TenantDatabaseRouter().db_for_read(Restaurant)))
+            return JsonResponse({"tenant":request.tenant_id})
+        with override_settings(DATABASES=dbs,FOODOO_TENANT_ROUTING=True,
+            FOODOO_TENANT_HOSTS={"first.example.test":"first","second.example.test":"second"},
+            ALLOWED_HOSTS=["first.example.test","second.example.test","unknown.example.test"]):
+            mw=TenantHostMiddleware(response)
+            factory=RequestFactory()
+            self.assertEqual(mw(factory.get("/",HTTP_HOST="first.example.test")).status_code,200)
+            self.assertEqual(mw(factory.get("/",HTTP_HOST="second.example.test")).status_code,200)
+            self.assertEqual(mw(factory.get("/",HTTP_HOST="unknown.example.test")).status_code,404)
+            self.assertEqual(seen,[("first","tenant_first"),("second","tenant_second")])
+            self.assertIsNone(current_database())
+            self.assertIsNone(TenantDatabaseRouter().db_for_read(Restaurant))
