@@ -252,21 +252,21 @@ class OrderHistoryReportTests(TestCase):
         import csv
         from openpyxl import load_workbook
         from io import BytesIO, StringIO
-        self.assertEqual(self.client.get("/api/reports/sales/export/?format=csv").status_code,403)
+        self.assertEqual(self.client.get("/api/reports/sales/export/?file_type=csv").status_code,403)
         self.client.force_authenticate(user=self.owner)
-        csv_response=self.client.get("/api/reports/sales/export/?format=csv")
+        csv_response=self.client.get("/api/reports/sales/export/?file_type=csv")
         self.assertEqual(csv_response.status_code,200)
         self.assertIn("text/csv",csv_response["Content-Type"])
         records=list(csv.reader(StringIO(csv_response.content.decode("utf-8-sig"))))
         self.assertEqual(len(records),2)
         self.assertEqual(records[1][4],"upi")
         self.assertEqual(records[1][8],"210.00")
-        xlsx=self.client.get("/api/reports/sales/export/?format=xlsx")
+        xlsx=self.client.get("/api/reports/sales/export/?file_type=xlsx")
         self.assertEqual(xlsx.status_code,200)
         sheet=load_workbook(BytesIO(xlsx.content),read_only=True).active
         self.assertEqual(sheet.max_row,2)
         self.assertEqual(sheet["E2"].value,"upi")
         self.client.force_authenticate(user=self.outsider)
-        self.assertEqual(len(list(csv.reader(StringIO(self.client.get("/api/reports/sales/export/?format=csv").content.decode("utf-8-sig"))))),1)
+        self.assertEqual(len(list(csv.reader(StringIO(self.client.get("/api/reports/sales/export/?file_type=csv").content.decode("utf-8-sig"))))),1)
         self.client.force_authenticate(user=self.owner)
-        self.assertEqual(self.client.get("/api/reports/sales/export/?format=pdf").status_code,400)
+        self.assertEqual(self.client.get("/api/reports/sales/export/?file_type=pdf").status_code,400)
