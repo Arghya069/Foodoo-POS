@@ -27,3 +27,12 @@ select{display:block;width:100%;padding:12px;border:1px solid #dbe4e2;border-rad
 .password-wrap{position:relative}.password-wrap input{padding-right:52px}.login-shell .password-toggle{position:absolute;right:5px;top:4px;width:40px;height:38px;min-height:0;margin:0;display:grid;place-items:center;background:transparent;color:#52675f;padding:0;border:0}.password-toggle:hover{background:#eaf3f0}.password-toggle:focus-visible{outline:2px solid #126b5b}
 
 .admin.wider{max-width:1150px;padding:0 18px}.report-filters{display:flex;align-items:end;gap:12px;flex-wrap:wrap;background:white;border:1px solid #dbe4e2;border-radius:12px;padding:16px;margin:20px 0}.report-filters label{flex:1 1 160px}.report-filters input,.report-filters select{margin:6px 0 0}.report-filters button{margin-bottom:0}.report-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:14px;margin:24px 0}.report-stats article{padding:22px;background:white;border:1px solid #dbe4e2;border-radius:12px}.report-stats small{display:block;color:#65736f;margin-bottom:10px}.report-stats strong{font-size:24px;color:#126b5b}.history-list{display:grid;gap:10px}.history-entry{background:white;border:1px solid #dbe4e2;border-radius:10px}.history-entry summary{cursor:pointer;display:grid;grid-template-columns:1.3fr 1.5fr 1fr auto;gap:16px;align-items:center;padding:17px}.history-entry summary small{display:block;color:#65736f;margin-top:5px}.history-detail{padding:14px 18px 18px;border-top:1px solid #e8efed}.history-detail p{display:flex;justify-content:space-between;gap:15px}.report-line{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid #e8efed}.pagination{display:flex;justify-content:flex-end;gap:12px;margin:18px 0}@media(max-width:700px){.history-entry summary{grid-template-columns:1fr 1fr}.report-filters{align-items:stretch}.report-filters button{width:100%}}
+
+/* Keep cashier cards aligned regardless of description length. */
+.products{align-items:stretch}
+.products article{display:flex;flex-direction:column;min-height:100%}
+.products article .dish-image,.products article .placeholder{height:120px;flex-shrink:0}
+.products article strong{display:block;min-height:1.4em}
+.products article p{margin:9px 0}
+.products article p:last-of-type{margin-top:auto;padding-top:8px;font-weight:700}
+.products article>button{align-self:flex-start;margin-top:6px}
