@@ -1,4 +1,5 @@
 import os
+import json
 from pathlib import Path
 from django.core.exceptions import ImproperlyConfigured
 import dj_database_url
@@ -16,6 +17,19 @@ ROOT_URLCONF="config.urls"
 TEMPLATES=[]
 WSGI_APPLICATION="config.wsgi.application"
 DATABASES={"default":dj_database_url.parse(os.getenv("DATABASE_URL",f"sqlite:///{BASE_DIR/'db.sqlite3'}"),conn_max_age=60,conn_health_checks=True)}
+# Optional named tenant databases. This does not yet activate request routing.
+# Example TENANT_DATABASE_URLS={"one_more":"postgresql://user:pass@localhost/db"}
+try:
+ TENANT_DATABASE_URLS=json.loads(os.getenv("TENANT_DATABASE_URLS","{}"))
+ if not isinstance(TENANT_DATABASE_URLS,dict):raise ValueError()
+except (ValueError,TypeError):
+ raise ImproperlyConfigured("TENANT_DATABASE_URLS must be a JSON object")
+for tenant_id,url in TENANT_DATABASE_URLS.items():
+ if not isinstance(tenant_id,str) or not __import__("re").fullmatch(r"[a-z][a-z0-9_-]{1,47}",tenant_id):
+  raise ImproperlyConfigured("Invalid tenant database alias")
+ if not isinstance(url,str) or not url.startswith(("postgresql://","postgres://")):
+  raise ImproperlyConfigured("Tenant database URLs must use PostgreSQL")
+ DATABASES["tenant_"+tenant_id]=dj_database_url.parse(url,conn_max_age=60,conn_health_checks=True)
 DEFAULT_AUTO_FIELD="django.db.models.BigAutoField"
 REST_FRAMEWORK={"DEFAULT_AUTHENTICATION_CLASSES":["rest_framework.authentication.SessionAuthentication"],"DEFAULT_PERMISSION_CLASSES":["rest_framework.permissions.IsAuthenticated"]}
 CORS_ALLOWED_ORIGINS=[x.strip() for x in os.getenv("CORS_ALLOWED_ORIGINS","http://localhost:5173").split(",") if x.strip()]
