@@ -262,3 +262,133 @@ def tokens(user=Depends(roles("admin","cashier","staff"))):
     snap=restaurant_root(user["restaurant_id"]).collection("daily_counters").document(day).get()
     data=snap.to_dict() if snap.exists else {}
     return {"date":day,"last_issued":data.get("last_number",0),"currently_serving":data.get("currently_serving",0)}
+
+class ServingUpdate(BaseModel):
+    currently_serving: int = Field(ge=0)
+
+@app.post("/api/tokens/today/")
+def set_serving(payload:ServingUpdate,user=Depends(roles("admin","cashier","staff"))):
+    day=now().astimezone(__import__("zoneinfo").ZoneInfo("Asia/Kolkata")).date().isoformat()
+    ref=restaurant_root(user["restaurant_id"]).collection("daily_counters").document(day)
+    tx=db.transaction()
+    @firestore.transactional
+    def update(transaction):
+        snap=ref.get(transaction=transaction)
+        data=snap.to_dict() if snap.exists else {}
+        if payload.currently_serving<data.get("currently_serving",0) or payload.currently_serving>data.get("last_number",0):
+            raise HTTPException(400,"Token cannot go backwards or exceed issued tokens")
+        transaction.set(ref,{"currently_serving":payload.currently_serving},merge=True)
+        return data.get("last_number",0)
+    issued=update(tx)
+    return {"date":day,"last_issued":issued,"currently_serving":payload.currently_serving}
+
+def order_view(doc):
+    o=doc.to_dict()
+    return {"id":doc.id,"status":o["status"],"receipt_number":o.get("receipt_number"),
+            "token_number":o.get("token_number"),"token_date":o.get("token_date"),
+            "customer_name":o.get("customer_name",""),"customer_phone":o.get("customer_phone",""),
+            "payment_method":o.get("payment_method",""),"whatsapp_consent":o.get("whatsapp_consent",False),
+            "subtotal":money(o["subtotal_paise"]),"cgst":money(o["cgst_paise"]),
+            "sgst":money(o["sgst_paise"]),"total":money(o["total_paise"]),
+            "created_at":o["created_at"].isoformat(),"paid_at":o.get("paid_at").isoformat() if o.get("paid_at") else None,
+            "items":[{"name":x["name"],"quantity":x["quantity"],"unit_price":money(x["unit_price_paise"]),
+                      "total":money(x["line_total_paise"])} for x in o.get("lines",[])]}
+
+def orders_query(user):
+    # Bounded Firestore scan for prototype. Replace with indexed cursor queries.
+    return [d for d in restaurant_root(user["restaurant_id"]).collection("orders").order_by("created_at",direction=firestore.Query.DESCENDING).limit(1000).stream()]
+
+@app.get("/api/orders/")
+def list_orders(user=Depends(roles("admin","cashier","staff"))):
+    return [{"id":d.id,"status":d.to_dict()["status"],"total":money(d.to_dict()["total_paise"]),
+             "receipt_number":d.to_dict().get("receipt_number")} for d in orders_query(user)[:50]]
+
+@app.get("/api/orders/history/")
+def history(start:str|None=None,end:str|None=None,status:str="all",q:str="",page:int=1,
+            user=Depends(roles("admin","cashier","staff"))):
+    from datetime import date
+    today=now().astimezone(__import__("zoneinfo").ZoneInfo("Asia/Kolkata")).date()
+    try:
+        lower=date.fromisoformat(start) if start else today-timedelta(days=29)
+        upper=date.fromisoformat(end) if end else today
+    except ValueError:raise HTTPException(400,"Invalid date")
+    if lower>upper or (upper-lower).days>366 or status not in ("all","paid","draft") or page<1:
+        raise HTTPException(400,"Invalid filter")
+    matches=[]
+    for doc in orders_query(user):
+        data=doc.to_dict()
+        if not lower<=data["created_at"].astimezone(__import__("zoneinfo").ZoneInfo("Asia/Kolkata")).date()<=upper:continue
+        if status!="all" and data["status"]!=status:continue
+        if q and not any(q.lower() in str(data.get(key,"")).lower() for key in ("customer_phone","customer_name","receipt_number")):continue
+        matches.append(order_view(doc))
+    return {"count":len(matches),"page":page,"page_size":25,"results":matches[(page-1)*25:page*25]}
+
+def paid_report_rows(user,start=None,end=None):
+    from datetime import date
+    today=now().astimezone(__import__("zoneinfo").ZoneInfo("Asia/Kolkata")).date()
+    try:
+        lower=date.fromisoformat(start) if start else today-timedelta(days=29)
+        upper=date.fromisoformat(end) if end else today
+    except ValueError:raise HTTPException(400,"Invalid date")
+    if lower>upper or (upper-lower).days>366:raise HTTPException(400,"Invalid date range")
+    paid=[]
+    for doc in orders_query(user):
+        record=doc.to_dict()
+        if record["status"]!="paid" or not record.get("paid_at"):continue
+        day=record["paid_at"].astimezone(__import__("zoneinfo").ZoneInfo("Asia/Kolkata")).date()
+        if lower<=day<=upper:paid.append((doc.id,record,day))
+    return lower,upper,paid
+
+@app.get("/api/reports/sales/")
+def sales_report(start:str|None=None,end:str|None=None,user=Depends(roles("admin","partner"))):
+    lower,upper,paid=paid_report_rows(user,start,end)
+    sums={key:sum(row[1][key] for row in paid) for key in ("subtotal_paise","cgst_paise","sgst_paise","total_paise")}
+    methods={};daily={}
+    for _,r,day in paid:
+        method=r.get("payment_method","unknown")
+        for group,key in ((methods,method),(daily,day.isoformat())):
+            value=group.setdefault(key,{"orders":0,"revenue_paise":0})
+            value["orders"]+=1;value["revenue_paise"]+=r["total_paise"]
+    return {"start":lower.isoformat(),"end":upper.isoformat(),"orders":len(paid),
+            "subtotal":money(sums["subtotal_paise"]),"cgst":money(sums["cgst_paise"]),
+            "sgst":money(sums["sgst_paise"]),"revenue":money(sums["total_paise"]),
+            "payment_methods":[{"method":k,"orders":v["orders"],"revenue":money(v["revenue_paise"])} for k,v in sorted(methods.items())],
+            "daily":[{"date":k,"orders":v["orders"],"revenue":money(v["revenue_paise"])} for k,v in sorted(daily.items())]}
+
+@app.get("/api/reports/sales/export/")
+def sales_export(start:str|None=None,end:str|None=None,file_type:str="csv",user=Depends(roles("admin","partner"))):
+    import csv
+    from io import BytesIO,StringIO
+    from fastapi.responses import StreamingResponse
+    lower,upper,paid=paid_report_rows(user,start,end)
+    if file_type not in ("csv","xlsx"):raise HTTPException(400,"Unknown export type")
+    headers=["Receipt","Paid at (IST)","Customer name","Customer phone","Payment method","Subtotal","CGST","SGST","Total"]
+    def safe_text(s):
+        value=str(s or "")
+        return "'"+value if value.startswith(("=","+","-","@")) else value
+    rows=[[safe_text(r.get("receipt_number")),day.isoformat(),safe_text(r.get("customer_name")),
+           safe_text(r.get("customer_phone")),safe_text(r.get("payment_method")),
+           *[money(r[k]) for k in ("subtotal_paise","cgst_paise","sgst_paise","total_paise")]] for _,r,day in paid]
+    filename=f"foodoo-sales-{lower}-to-{upper}.{file_type}"
+    if file_type=="csv":
+        out=StringIO();writer=csv.writer(out);writer.writerow(headers);writer.writerows(rows)
+        return Response(content="\ufeff"+out.getvalue(),media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition":f'attachment; filename="{filename}"'})
+    from openpyxl import Workbook
+    wb=Workbook();ws=wb.active;ws.title="Sales";ws.append(headers)
+    for row in rows:ws.append(row)
+    ws.freeze_panes="A2";ws.auto_filter.ref=ws.dimensions
+    out=BytesIO();wb.save(out)
+    return Response(content=out.getvalue(),media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition":f'attachment; filename="{filename}"'})
+
+@app.get("/api/kitchen/")
+def kitchen(user=Depends(roles("admin","chef"))):
+    results=[]
+    for doc in orders_query(user):
+        row=doc.to_dict()
+        if row["status"]=="paid":
+            results.append({"id":doc.id,"token_number":row.get("token_number"),"token_date":row.get("token_date"),
+                "paid_at":row.get("paid_at").isoformat() if row.get("paid_at") else None,
+                "items":[{"name":x["name"],"quantity":x["quantity"]} for x in row["lines"]]})
+    return results[:50]
