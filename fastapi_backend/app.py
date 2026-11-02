@@ -392,3 +392,91 @@ def kitchen(user=Depends(roles("admin","chef"))):
                 "paid_at":row.get("paid_at").isoformat() if row.get("paid_at") else None,
                 "items":[{"name":x["name"],"quantity":x["quantity"]} for x in row["lines"]]})
     return results[:50]
+
+class StaffCreate(BaseModel):
+    username: str = Field(min_length=2,max_length=150)
+    first_name: str = ""
+    password: str = Field(min_length=10)
+    role: str
+
+@app.get("/api/staff/")
+def staff(user=Depends(roles("admin"))):
+    return [{"id":s.id,**{k:v for k,v in s.to_dict().items() if k in ("username","first_name","role","active")}}
+            for s in db.collection("identities").where("restaurant_id","==",user["restaurant_id"]).stream()]
+
+@app.post("/api/staff/",status_code=201)
+def create_staff(payload:StaffCreate,user=Depends(roles("admin"))):
+    if payload.role not in ("admin","cashier","chef","partner"):
+        raise HTTPException(400,"Invalid staff role")
+    # Claim the username using the normalized username as the document ID.
+    username=payload.username.casefold()
+    if not all(c.isalnum() or c in "._-" for c in username):
+        raise HTTPException(400,"Invalid username")
+    ref=db.collection("identities").document(username)
+    try:
+        ref.create({"username":payload.username,"first_name":payload.first_name,
+                    "password_hash":password_hash.hash(payload.password),
+                    "restaurant_id":user["restaurant_id"],"role":payload.role,"active":True})
+    except __import__("google.api_core.exceptions",fromlist=["AlreadyExists"]).AlreadyExists:
+        raise HTTPException(409,"Username is already taken")
+    return {"id":ref.id,"username":payload.username,"first_name":payload.first_name,"role":payload.role,"active":True}
+
+@app.patch("/api/staff/{staff_id}/")
+def staff_change(staff_id:str,changes:dict,user=Depends(roles("admin"))):
+    ref=db.collection("identities").document(staff_id)
+    snap=ref.get()
+    if not snap.exists or snap.to_dict().get("restaurant_id")!=user["restaurant_id"]:
+        raise HTTPException(404,"Staff member not found")
+    allowed={"role","active","password","first_name"}
+    if not changes or set(changes)-allowed:raise HTTPException(400,"Invalid staff fields")
+    if "role" in changes and changes["role"] not in ("admin","cashier","chef","partner"):
+        raise HTTPException(400,"Invalid role")
+    if "active" in changes and not isinstance(changes["active"],bool):
+        raise HTTPException(400,"Invalid active status")
+    if staff_id==user["id"] and (changes.get("active") is False or changes.get("role","admin")!="admin"):
+        raise HTTPException(400,"Cannot disable or demote your own account")
+    existing=snap.to_dict()
+    if existing["role"]=="admin" and (changes.get("role") not in (None,"admin") or changes.get("active") is False):
+        admins=[m for m in db.collection("identities").where("restaurant_id","==",user["restaurant_id"]).stream()
+                if m.to_dict().get("role")=="admin" and m.to_dict().get("active",True) and m.id!=staff_id]
+        if not admins:raise HTTPException(400,"At least one active admin is required")
+    if "password" in changes:
+        if not isinstance(changes["password"],str) or len(changes["password"])<10:
+            raise HTTPException(400,"Password must be at least 10 characters")
+        changes["password_hash"]=password_hash.hash(changes.pop("password"))
+    ref.update(changes)
+    data=ref.get().to_dict()
+    return {"id":staff_id,**{k:data[k] for k in ("username","first_name","role","active")}}
+
+@app.get("/api/orders/{order_id}/receipt/")
+def receipt(order_id:str,user=Depends(roles("admin","cashier","staff"))):
+    from io import BytesIO
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.units import mm
+    ref=restaurant_root(user["restaurant_id"]).collection("orders").document(order_id)
+    snap=ref.get()
+    if not snap.exists:raise HTTPException(404,"Order not found")
+    row=snap.to_dict()
+    if row["status"]!="paid":raise HTTPException(409,"Order not paid yet")
+    restaurant=restaurant_root(user["restaurant_id"]).get().to_dict()
+    buffer=BytesIO()
+    height=max(120,65+len(row["lines"])*9)*mm
+    sheet=canvas.Canvas(buffer,pagesize=(57*mm,height))
+    pos=height-9*mm
+    def line(value,size=8):
+        nonlocal pos
+        sheet.setFont("Helvetica",size)
+        sheet.drawString(4*mm,pos,str(value)[:43])
+        pos-=6*mm
+    line(restaurant.get("name","Foodoo"),10)
+    line("TOKEN #"+str(row.get("token_number","-")),13)
+    line(row.get("receipt_number",""),7)
+    for item in row["lines"]:
+        line(f'{item["quantity"]} x {item["name"][:17]}  {money(item["line_total_paise"])}')
+    line("Subtotal "+money(row["subtotal_paise"]))
+    line("CGST "+money(row["cgst_paise"]))
+    line("SGST "+money(row["sgst_paise"]))
+    line("TOTAL "+money(row["total_paise"]),10)
+    sheet.showPage();sheet.save()
+    return Response(content=buffer.getvalue(),media_type="application/pdf",
+                    headers={"Content-Disposition":f'attachment; filename="foodoo-{order_id}.pdf"'})
