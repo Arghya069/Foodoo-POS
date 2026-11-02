@@ -480,3 +480,26 @@ def receipt(order_id:str,user=Depends(roles("admin","cashier","staff"))):
     sheet.showPage();sheet.save()
     return Response(content=buffer.getvalue(),media_type="application/pdf",
                     headers={"Content-Disposition":f'attachment; filename="foodoo-{order_id}.pdf"'})
+
+@app.get("/api/customers/lookup/")
+def lookup_customer(phone:str="",user=Depends(roles("admin","cashier","staff"))):
+    if not phone or len(phone)>25:raise HTTPException(400,"Invalid phone number")
+    orders=restaurant_root(user["restaurant_id"]).collection("orders").where("customer_phone","==",phone).limit(100).stream()
+    paid=[x.to_dict() for x in orders if x.to_dict().get("status")=="paid"]
+    if not paid:return {"customer_name":"","whatsapp_consent":False}
+    recent=max(paid,key=lambda o:o.get("paid_at") or datetime.min.replace(tzinfo=timezone.utc))
+    return {"customer_name":recent.get("customer_name",""),"whatsapp_consent":recent.get("whatsapp_consent",False)}
+
+@app.get("/api/customers/suggest/")
+def suggest_customers(q:str="",user=Depends(roles("admin","cashier","staff"))):
+    # Temporary bounded lookup until dedicated customer index is added.
+    if len(q)<3:return []
+    matches={}
+    for snapshot in orders_query(user):
+        data=snapshot.to_dict()
+        phone=data.get("customer_phone","")
+        if data.get("status")=="paid" and q in phone and phone not in matches:
+            matches[phone]={"customer_phone":phone,"customer_name":data.get("customer_name",""),
+                            "whatsapp_consent":data.get("whatsapp_consent",False)}
+            if len(matches)>=8:break
+    return list(matches.values())
