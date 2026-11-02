@@ -25,8 +25,7 @@ The new API deliberately has separate Firestore collection paths
 signed-in session, not a request-provided tenant ID. Date-scoped token counters
 will use Firestore transactions.
 
-The frontend is **not yet switched**: run it against Django until the parity
-matrix, real integration tests, and data migration are finished.
+The React frontend is now wired through Vite to FastAPI on port **8001** on this branch. It still needs real integration testing with Firestore before we can call it feature-parity or production-ready.
 
 ## Required before production cutover
 
@@ -44,3 +43,41 @@ matrix, real integration tests, and data migration are finished.
 **Important:** A lighter framework does not guarantee lower total database
 cost or development complexity. Firestore is a viable option; this branch lets
 us prove parity and performance before replacing the existing system.
+
+## Run both locally in the new clone
+
+Terminal A (from the project root):
+```sh
+cd fastapi_backend
+source .venv/bin/activate
+# Firestore emulator is safest for development. If you use it:
+# export FIRESTORE_EMULATOR_HOST=127.0.0.1:8089
+# export FOODOO_FIRESTORE_PROJECT=foodoo-local
+uvicorn app:app --reload --host 127.0.0.1 --port 8001
+```
+
+Terminal B (from the project root):
+```sh
+cd frontend
+npm ci
+npm run dev
+```
+
+Open http://localhost:5173. Vite proxies /api to http://127.0.0.1:8001.
+Never run Django on port 8001 or use the other clone's frontend against
+the Firestore API by mistake. To point Vite at a different server, set
+`FOODOO_API_TARGET=http://127.0.0.1:PORT` before `npm run dev`.
+
+To create a fresh Firestore test tenant, set
+`FOODOO_INITIAL_ADMIN_PASSWORD` in your shell and run:
+```sh
+python bootstrap.py --restaurant-id one-more --restaurant-name 1More --admin-username admin
+```
+
+Use a **new emulator database or disposable Firestore project** for this bootstrap.
+Do not overwrite the existing production users or records.
+
+Current gaps: manual/integration verification against a Firestore emulator,
+historical order and customer import, high-volume indexed history and reports,
+production-grade account provisioning, full receipt visual parity, and
+security review. Keep Django as the baseline until these are resolved.
