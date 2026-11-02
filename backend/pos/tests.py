@@ -1,0 +1,435 @@
+from decimal import Decimal
+from io import BytesIO
+from pypdf import PdfReader
+from django.contrib.auth.models import User
+from django.test import TestCase
+from rest_framework.test import APIClient
+from .models import Membership, MenuItem, Order, Restaurant
+
+class PosFlowTests(TestCase):
+    def setUp(self):
+        self.restaurant = Restaurant.objects.create(name="First Restaurant", cgst_rate=Decimal("2.50"), sgst_rate=Decimal("2.50"))
+        self.other = Restaurant.objects.create(name="Other Restaurant")
+        self.admin = User.objects.create_user("owner", password="test-password")
+        self.staff = User.objects.create_user("cashier", password="test-password")
+        self.outsider = User.objects.create_user("other-cashier", password="test-password")
+        Membership.objects.create(user=self.admin, restaurant=self.restaurant, role="admin")
+        Membership.objects.create(user=self.staff, restaurant=self.restaurant, role="staff")
+        Membership.objects.create(user=self.outsider, restaurant=self.other, role="staff")
+        self.item = MenuItem.objects.create(restaurant=self.restaurant, name="Thali", price=Decimal("200.00"))
+        self.client = APIClient()
+
+    def login(self, user):
+        self.client.force_authenticate(user=user)
+
+    def create_order(self):
+        return self.client.post("/api/orders/", {"items": [{"id": self.item.id, "quantity": 1}], "customer_name": "Guest", "customer_phone": "9999999999"}, format="json")
+
+    def test_admin_can_configure_tax_and_staff_cannot(self):
+        self.login(self.staff)
+        self.assertEqual(self.client.patch("/api/restaurant/", {"cgst_rate": "9.00"}, format="json").status_code, 403)
+        self.login(self.admin)
+        response = self.client.patch("/api/restaurant/", {"cgst_rate": "3.00", "sgst_rate": "3.00"}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.restaurant.refresh_from_db()
+        self.assertEqual(self.restaurant.cgst_rate, Decimal("3.00"))
+
+    def test_staff_cannot_add_menu_items(self):
+        self.login(self.staff)
+        response = self.client.post("/api/menu/", {"name": "Extra", "price": "20.00"}, format="json")
+        self.assertEqual(response.status_code, 403)
+
+    def test_order_tax_paid_receipt_and_idempotent_payment(self):
+        self.login(self.staff)
+        response = self.create_order()
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(Decimal(response.data["subtotal"]), Decimal("200.00"))
+        self.assertEqual(Decimal(response.data["cgst"]), Decimal("5.00"))
+        self.assertEqual(Decimal(response.data["sgst"]), Decimal("5.00"))
+        self.assertEqual(Decimal(response.data["total"]), Decimal("210.00"))
+        order_id = response.data["id"]
+        self.assertEqual(self.client.get(f"/api/orders/{order_id}/receipt/").status_code, 404)
+        first = self.client.post(f"/api/orders/{order_id}/pay/", {"payment_method":"cash"}, format="json")
+        second = self.client.post(f"/api/orders/{order_id}/pay/", {}, format="json")
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.data["receipt_number"], second.data["receipt_number"])
+        self.assertEqual(Order.objects.get(pk=order_id).status, "paid")
+        receipt = self.client.get(f"/api/orders/{order_id}/receipt/")
+        self.assertEqual(receipt.status_code, 200)
+        self.assertEqual(receipt["Content-Type"], "application/pdf")
+        pdf_bytes=b"".join(receipt.streaming_content)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+        pdf=PdfReader(BytesIO(pdf_bytes))
+        self.assertAlmostEqual(float(pdf.pages[0].mediabox.width), 57*72/25.4, delta=0.1)
+        self.assertIn("Powered by foodoo", pdf.pages[0].extract_text())
+
+    def test_cannot_order_item_from_another_restaurant(self):
+        self.login(self.outsider)
+        response = self.create_order()
+        self.assertEqual(response.status_code, 400)
+
+    def test_cannot_view_other_restaurant_receipt(self):
+        self.login(self.staff)
+        order_id = self.create_order().data["id"]
+        self.client.post(f"/api/orders/{order_id}/pay/", {}, format="json")
+        self.login(self.outsider)
+        self.assertEqual(self.client.get(f"/api/orders/{order_id}/receipt/").status_code, 404)
+        self.assertEqual(self.client.post(f"/api/orders/{order_id}/pay/", {}, format="json").status_code, 404)
+
+    def test_server_uses_menu_price_not_client_price(self):
+        self.login(self.staff)
+        response = self.client.post("/api/orders/", {"items": [{"id": self.item.id, "quantity": 1, "price": "0.01"}]}, format="json")
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(Decimal(response.data["subtotal"]), Decimal("200.00"))
+
+    def test_menu_description_image_and_tenant_scoped_edit(self):
+        self.login(self.admin)
+        created = self.client.post("/api/menu/", {"name": "Paneer Roll", "price": "80.00", "description": "Fresh paneer in a wrap", "image_url": "https://example.com/roll.jpg"}, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        item_id = created.data["id"]
+        self.assertEqual(created.data["description"], "Fresh paneer in a wrap")
+        self.assertEqual(created.data["image_url"], "https://example.com/roll.jpg")
+        self.assertEqual(self.client.patch(f"/api/menu/{item_id}/", {"price": "85.00"}, format="json").status_code, 200)
+        self.login(self.outsider)
+        self.assertEqual(self.client.patch(f"/api/menu/{item_id}/", {"price": "1.00"}, format="json").status_code, 403)
+        self.assertNotIn(item_id, [i["id"] for i in self.client.get("/api/menu/").data])
+
+    def test_menu_classification(self):
+        self.login(self.admin)
+        created = self.client.post("/api/menu/", {"name":"Paneer Tikka", "price":"190.00","food_type":"veg","food_subtype":"paneer","category":"starter"},format="json")
+        self.assertEqual(created.status_code,201,created.data)
+        self.assertEqual(created.data["food_type"],"veg")
+        self.assertEqual(created.data["food_subtype"],"paneer")
+        self.assertEqual(created.data["category"],"starter")
+        invalid = self.client.post("/api/menu/", {"name":"Invalid","price":"100.00","food_type":"unknown"},format="json")
+        self.assertEqual(invalid.status_code,400)
+
+    def test_restaurant_logo_setting_is_admin_only(self):
+        self.login(self.staff)
+        self.assertEqual(self.client.patch("/api/restaurant/",{"logo_data":"data:image/png;base64,YWJj"},format="json").status_code,403)
+        self.login(self.admin)
+        self.assertEqual(self.client.patch("/api/restaurant/",{"logo_data":"data:image/png;base64,YWJj"},format="json").status_code,200)
+        self.assertEqual(self.client.get("/api/restaurant/").data["logo_data"],"data:image/png;base64,YWJj")
+
+    def test_payment_method_required_and_customer_lookup_tenant_scoped(self):
+        self.login(self.staff)
+        order_id=self.create_order().data["id"]
+        self.assertEqual(self.client.post(f"/api/orders/{order_id}/pay/", {},format="json").status_code,400)
+        paid=self.client.post(f"/api/orders/{order_id}/pay/",{"payment_method":"upi"},format="json")
+        self.assertEqual(paid.status_code,200)
+        self.assertEqual(paid.data["payment_method"],"upi")
+        self.assertEqual(self.client.get("/api/customers/lookup/?phone=9999999999").data["customer_name"],"Guest")
+        self.login(self.outsider)
+        self.assertEqual(self.client.get("/api/customers/lookup/?phone=9999999999").data["customer_name"],"")
+
+    def test_whatsapp_consent_is_saved_but_not_sent(self):
+        self.login(self.staff)
+        response=self.client.post("/api/orders/",{"items":[{"id":self.item.id,"quantity":1}],"customer_phone":"9999999999","whatsapp_consent":True},format="json")
+        self.assertEqual(response.status_code,201)
+        self.assertTrue(Order.objects.get(pk=response.data["id"]).whatsapp_consent)
+
+    def test_menu_subtype_consistency(self):
+        self.login(self.admin)
+        bad=self.client.post("/api/menu/",{"name":"Fish curry","price":"100.00","food_type":"veg","food_subtype":"fish"},format="json")
+        self.assertEqual(bad.status_code,400)
+        good=self.client.post("/api/menu/",{"name":"Fish curry","price":"100.00","food_type":"non_veg","food_subtype":"fish"},format="json")
+        self.assertEqual(good.status_code,201,good.data)
+
+    def test_image_upload_saved_and_returned_for_cashier(self):
+        import base64
+        self.login(self.admin)
+        sample="data:image/png;base64,"+base64.b64encode(b"sample-photo").decode()
+        response=self.client.post("/api/menu/",{"name":"Biryani","price":"200.00","image_data":sample},format="json")
+        self.assertEqual(response.status_code,201,response.data)
+        self.assertEqual(response.data["image_data"],sample)
+        self.login(self.staff)
+        items=self.client.get("/api/menu/").data
+        self.assertEqual(next(x for x in items if x["name"]=="Biryani")["image_data"],sample)
+
+    def test_phone_suggestions_paid_and_restaurant_scoped(self):
+        self.login(self.staff)
+        order_id=self.create_order().data["id"]
+        self.assertEqual(self.client.get("/api/customers/suggest/?q=999").data,[])
+        self.client.post(f"/api/orders/{order_id}/pay/",{"payment_method":"cash"},format="json")
+        result=self.client.get("/api/customers/suggest/?q=999").data
+        self.assertEqual(result,[{"customer_phone":"9999999999","customer_name":"Guest","whatsapp_consent":False}])
+        self.login(self.outsider)
+        self.assertEqual(self.client.get("/api/customers/suggest/?q=999").data,[])
+
+class SessionAuthenticationTests(TestCase):
+    def setUp(self):
+        self.user=User.objects.create_user("session-owner",password="secure-password")
+        restaurant=Restaurant.objects.create(name="Session Restaurant")
+        Membership.objects.create(user=self.user,restaurant=restaurant,role="admin")
+
+    def test_csrf_login_session_and_logout(self):
+        from django.test import Client
+        import json
+        client=Client(enforce_csrf_checks=True)
+        self.assertEqual(client.get("/api/me/").status_code,403)
+        self.assertEqual(client.post("/api/auth/login/",data=json.dumps({"username":"session-owner","password":"secure-password"}),content_type="application/json").status_code,403)
+        client.get("/api/auth/csrf/")
+        token=client.cookies["csrftoken"].value
+        invalid=client.post("/api/auth/login/",data=json.dumps({"username":"session-owner","password":"wrong"}),content_type="application/json",HTTP_X_CSRFTOKEN=token)
+        self.assertEqual(invalid.status_code,401)
+        response=client.post("/api/auth/login/",data=json.dumps({"username":"session-owner","password":"secure-password"}),content_type="application/json",HTTP_X_CSRFTOKEN=token)
+        self.assertEqual(response.status_code,200)
+        self.assertIn("sessionid",client.cookies)
+        self.assertEqual(client.get("/api/me/").status_code,200)
+        csrf=client.cookies["csrftoken"].value
+        self.assertEqual(client.post("/api/auth/logout/",content_type="application/json",HTTP_X_CSRFTOKEN=csrf).status_code,200)
+        self.assertEqual(client.get("/api/me/").status_code,403)
+
+class OrderHistoryReportTests(TestCase):
+    def setUp(self):
+        self.restaurant=Restaurant.objects.create(name="Sales Restaurant")
+        self.other=Restaurant.objects.create(name="Other Sales")
+        self.owner=User.objects.create_user("sales-owner",password="pass")
+        self.cashier=User.objects.create_user("sales-staff",password="pass")
+        self.outsider=User.objects.create_user("other-staff",password="pass")
+        Membership.objects.create(user=self.owner,restaurant=self.restaurant,role="admin")
+        Membership.objects.create(user=self.cashier,restaurant=self.restaurant,role="staff")
+        Membership.objects.create(user=self.outsider,restaurant=self.other,role="staff")
+        self.menu_item=MenuItem.objects.create(restaurant=self.restaurant,name="Biryani",price=Decimal("100.00"))
+        self.client=APIClient()
+        self.client.force_authenticate(user=self.cashier)
+        data=self.client.post("/api/orders/",{"items":[{"id":self.menu_item.id,"quantity":2}],"customer_name":"Customer A","customer_phone":"9898988787"},format="json").data
+        self.order_id=data["id"]
+        self.client.post(f"/api/orders/{self.order_id}/pay/",{"payment_method":"upi"},format="json")
+
+    def test_history_includes_snapshots_and_is_tenant_scoped(self):
+        response=self.client.get("/api/orders/history/")
+        self.assertEqual(response.status_code,200,response.data)
+        self.assertEqual(response.data["count"],1)
+        row=response.data["results"][0]
+        self.assertEqual(row["items"][0]["name"],"Biryani")
+        self.assertEqual(row["payment_method"],"upi")
+        self.assertEqual(self.client.get("/api/orders/history/?q=nonexistent").data["count"],0)
+        self.client.force_authenticate(user=self.outsider)
+        self.assertEqual(self.client.get("/api/orders/history/").data["count"],0)
+
+    def test_reports_only_for_admin_and_only_paid_tenant_orders(self):
+        self.assertEqual(self.client.get("/api/reports/sales/").status_code,403)
+        self.client.force_authenticate(user=self.owner)
+        report=self.client.get("/api/reports/sales/")
+        self.assertEqual(report.status_code,200,report.data)
+        self.assertEqual(report.data["orders"],1)
+        self.assertEqual(Decimal(report.data["subtotal"]),Decimal("200.00"))
+        self.assertEqual(report.data["payment_methods"][0]["method"],"upi")
+        self.assertEqual(self.client.get("/api/reports/sales/?start=2026-11-30&end=2026-11-01").status_code,400)
+
+    def test_admin_archive_restore_and_staff_visibility(self):
+        self.client.force_authenticate(user=self.owner)
+        archive=self.client.patch(f"/api/menu/{self.menu_item.id}/",{"active":False},format="json")
+        self.assertEqual(archive.status_code,200,archive.data)
+        self.assertFalse(archive.data["active"])
+        self.assertIn(self.menu_item.id,[x["id"] for x in self.client.get("/api/menu/").data])
+        self.client.force_authenticate(user=self.cashier)
+        self.assertNotIn(self.menu_item.id,[x["id"] for x in self.client.get("/api/menu/").data])
+        denied=self.client.post("/api/orders/",{"items":[{"id":self.menu_item.id,"quantity":1}]},format="json")
+        self.assertEqual(denied.status_code,400)
+        self.client.force_authenticate(user=self.owner)
+        restored=self.client.patch(f"/api/menu/{self.menu_item.id}/",{"active":True},format="json")
+        self.assertEqual(restored.status_code,200,restored.data)
+        self.assertTrue(restored.data["active"])
+        self.client.force_authenticate(user=self.cashier)
+        self.assertIn(self.menu_item.id,[x["id"] for x in self.client.get("/api/menu/").data])
+
+    def test_history_filters_and_report_date_boundaries(self):
+        self.client.force_authenticate(user=self.cashier)
+        self.assertEqual(self.client.get("/api/orders/history/?status=draft").data["count"],0)
+        self.assertEqual(self.client.get("/api/orders/history/?status=paid").data["count"],1)
+        self.assertEqual(self.client.get("/api/orders/history/?q=Customer%20A").data["count"],1)
+        self.assertEqual(self.client.get("/api/orders/history/?page=abc").status_code,400)
+        self.assertEqual(self.client.get("/api/orders/history/?start=2026-12-30&end=2026-11-01").status_code,400)
+        self.client.force_authenticate(user=self.owner)
+        response=self.client.get("/api/reports/sales/?start=2000-01-01&end=2000-01-02")
+        self.assertEqual(response.status_code,200,response.data)
+        self.assertEqual(response.data["orders"],0)
+        self.assertEqual(Decimal(response.data["revenue"]),Decimal("0"))
+
+    def test_sales_exports_are_admin_only_tenant_scoped_and_valid(self):
+        import csv
+        from openpyxl import load_workbook
+        from io import BytesIO, StringIO
+        self.assertEqual(self.client.get("/api/reports/sales/export/?file_type=csv").status_code,403)
+        self.client.force_authenticate(user=self.owner)
+        csv_response=self.client.get("/api/reports/sales/export/?file_type=csv")
+        self.assertEqual(csv_response.status_code,200)
+        self.assertIn("text/csv",csv_response["Content-Type"])
+        records=list(csv.reader(StringIO(csv_response.content.decode("utf-8-sig"))))
+        self.assertEqual(len(records),2)
+        self.assertEqual(records[1][4],"upi")
+        self.assertEqual(records[1][8],"210.00")
+        xlsx=self.client.get("/api/reports/sales/export/?file_type=xlsx")
+        self.assertEqual(xlsx.status_code,200)
+        sheet=load_workbook(BytesIO(xlsx.content),read_only=True).active
+        self.assertEqual(sheet.max_row,2)
+        self.assertEqual(sheet["E2"].value,"upi")
+        self.client.force_authenticate(user=self.outsider)
+        self.assertEqual(len(list(csv.reader(StringIO(self.client.get("/api/reports/sales/export/?file_type=csv").content.decode("utf-8-sig"))))),1)
+        self.client.force_authenticate(user=self.owner)
+        self.assertEqual(self.client.get("/api/reports/sales/export/?file_type=pdf").status_code,400)
+
+class DailyTokenTests(TestCase):
+    def setUp(self):
+        self.restaurant=Restaurant.objects.create(name="Token Restaurant")
+        self.other=Restaurant.objects.create(name="Other Token Restaurant")
+        self.user=User.objects.create_user("tokenstaff",password="secret")
+        self.other_user=User.objects.create_user("other-tokenstaff",password="secret")
+        Membership.objects.create(user=self.user,restaurant=self.restaurant,role="staff")
+        Membership.objects.create(user=self.other_user,restaurant=self.other,role="staff")
+        self.item=MenuItem.objects.create(restaurant=self.restaurant,name="Rice",price=Decimal("50"))
+        self.other_item=MenuItem.objects.create(restaurant=self.other,name="Rice",price=Decimal("50"))
+        self.client=APIClient()
+
+    def test_daily_token_issuance_status_and_tenant_isolation(self):
+        self.client.force_authenticate(user=self.user)
+        a=self.client.post("/api/orders/",{"items":[{"id":self.item.pk,"quantity":1}]},format="json")
+        b=self.client.post("/api/orders/",{"items":[{"id":self.item.pk,"quantity":1}]},format="json")
+        self.assertEqual(a.status_code,201,a.data)
+        self.assertEqual(a.data["token_number"],1)
+        self.assertEqual(b.data["token_number"],2)
+        self.assertEqual(a.data["token_date"],b.data["token_date"])
+        self.assertEqual(self.client.get("/api/tokens/today/").data["last_issued"],2)
+        self.assertEqual(self.client.post("/api/tokens/today/",{"currently_serving":3},format="json").status_code,400)
+        self.assertEqual(self.client.post("/api/tokens/today/",{"currently_serving":1},format="json").status_code,200)
+        self.assertEqual(self.client.post("/api/tokens/today/",{"currently_serving":0},format="json").status_code,400)
+        self.client.force_authenticate(user=self.other_user)
+        self.assertEqual(self.client.get("/api/tokens/today/").data["last_issued"],0)
+        other=self.client.post("/api/orders/",{"items":[{"id":self.other_item.pk,"quantity":1}]},format="json")
+        self.assertEqual(other.data["token_number"],1)
+
+    def test_branch_identity_defaults_and_admin_edit(self):
+        self.assertEqual(self.restaurant.branch_type,"main")
+        self.assertEqual(self.restaurant.branch_code,"main")
+        self.client.force_authenticate(user=self.user)
+        self.assertEqual(self.client.patch("/api/restaurant/",{"branch_type":"branch"},format="json").status_code,403)
+        self.user.pos_membership.role="admin"
+        self.user.pos_membership.save()
+        result=self.client.patch("/api/restaurant/",{"branch_type":"branch","branch_name":"Brahmapur","branch_code":"berhampur-01"},format="json")
+        self.assertEqual(result.status_code,200,result.data)
+        self.assertEqual(result.data["branch_type"],"branch")
+
+class StaffRoleTests(TestCase):
+    def setUp(self):
+        self.r=Restaurant.objects.create(name="Staff Restaurant")
+        self.owner=User.objects.create_user("team-owner",password="test-pass")
+        Membership.objects.create(user=self.owner,restaurant=self.r,role="admin")
+        self.client=APIClient()
+        self.client.force_authenticate(user=self.owner)
+
+    def test_staff_creation_role_permissions_and_disabling(self):
+        response=self.client.post("/api/staff/",{"username":"chef-new","password":"secure-password-123","role":"chef"},format="json")
+        self.assertEqual(response.status_code,201,response.data)
+        self.assertNotIn("password",response.data)
+        chef=User.objects.get(username="chef-new")
+        self.client.force_authenticate(user=chef)
+        self.assertEqual(self.client.get("/api/kitchen/").status_code,200)
+        self.assertEqual(self.client.get("/api/staff/").status_code,403)
+        self.assertEqual(self.client.get("/api/menu/").status_code,403)
+        self.assertEqual(self.client.get("/api/orders/history/").status_code,403)
+        self.assertEqual(self.client.get("/api/reports/sales/").status_code,403)
+        self.client.force_authenticate(user=self.owner)
+        self.assertEqual(self.client.patch(f'/api/staff/{response.data["id"]}/',{"active":False},format="json").status_code,200)
+        self.assertFalse(User.objects.get(pk=chef.pk).is_active)
+
+    def test_partner_only_reports_and_admin_self_protection(self):
+        p=self.client.post("/api/staff/",{"username":"partner-new","password":"secure-password-123","role":"partner"},format="json")
+        self.assertEqual(p.status_code,201,p.data)
+        self.client.force_authenticate(user=User.objects.get(username="partner-new"))
+        self.assertEqual(self.client.get("/api/reports/sales/").status_code,200)
+        self.assertEqual(self.client.get("/api/reports/sales/export/?file_type=csv").status_code,200)
+        self.assertEqual(self.client.get("/api/tokens/today/").status_code,403)
+        self.assertEqual(self.client.get("/api/restaurant/").status_code,200)
+        self.assertEqual(self.client.patch("/api/restaurant/",{"name":"Bad"},format="json").status_code,403)
+        self.client.force_authenticate(user=self.owner)
+        mid=Membership.objects.get(user=self.owner).pk
+        self.assertEqual(self.client.patch(f"/api/staff/{mid}/",{"active":False},format="json").status_code,400)
+        self.assertEqual(self.client.patch(f"/api/staff/{mid}/",{"role":"partner"},format="json").status_code,400)
+
+class FullRestaurantWorkflowTests(TestCase):
+    def test_admin_setup_cashier_checkout_receipt_history_and_report(self):
+        from io import BytesIO
+        from pypdf import PdfReader
+        restaurant=Restaurant.objects.create(name="End to End")
+        admin=User.objects.create_user("e2e-admin",password="safe-test-password")
+        cashier=User.objects.create_user("e2e-cashier",password="safe-test-password")
+        Membership.objects.create(user=admin,restaurant=restaurant,role="admin")
+        Membership.objects.create(user=cashier,restaurant=restaurant,role="cashier")
+        client=APIClient()
+        client.force_authenticate(user=admin)
+        settings=client.patch("/api/restaurant/",{"name":"1More Test","gstin":"","cgst_rate":"2.50","sgst_rate":"2.50"},format="json")
+        self.assertEqual(settings.status_code,200,settings.data)
+        created=client.post("/api/menu/",{"name":"Chicken Biryani","price":"200.00","food_type":"non_veg","food_subtype":"chicken"},format="json")
+        self.assertEqual(created.status_code,201,created.data)
+        item_id=created.data["id"]
+        client.force_authenticate(user=cashier)
+        order=client.post("/api/orders/",{"items":[{"id":item_id,"quantity":2}],"customer_name":"Test Customer","customer_phone":"9898988787","whatsapp_consent":True},format="json")
+        self.assertEqual(order.status_code,201,order.data)
+        self.assertEqual(order.data["token_number"],1)
+        self.assertEqual(Decimal(order.data["total"]),Decimal("420.00"))
+        paid=client.post(f'/api/orders/{order.data["id"]}/pay/',{"payment_method":"upi"},format="json")
+        self.assertEqual(paid.status_code,200,paid.data)
+        self.assertTrue(paid.data["whatsapp_consent"])
+        receipt=client.get(f'/api/orders/{order.data["id"]}/receipt/')
+        self.assertEqual(receipt.status_code,200)
+        content=b"".join(receipt.streaming_content)
+        txt=PdfReader(BytesIO(content)).pages[0].extract_text()
+        self.assertIn("TOKEN #1",txt)
+        self.assertIn("Chicken Biryani",txt)
+        history=client.get("/api/orders/history/")
+        self.assertEqual(history.data["count"],1)
+        self.assertEqual(history.data["results"][0]["token_number"],1)
+        client.force_authenticate(user=admin)
+        summary=client.get("/api/reports/sales/")
+        self.assertEqual(summary.status_code,200,summary.data)
+        self.assertEqual(summary.data["orders"],1)
+        self.assertEqual(Decimal(summary.data["revenue"]),Decimal("420.00"))
+        exported=client.get("/api/reports/sales/export/?file_type=csv")
+        self.assertEqual(exported.status_code,200)
+        self.assertIn(b"420.00",exported.content)
+
+class TenantRegistryTests(TestCase):
+    def test_explicit_alias_and_unknown_tenant_fail_closed(self):
+        from django.test import override_settings
+        from config.tenant_registry import resolve_tenant,tenant_alias
+        from django.core.exceptions import ImproperlyConfigured
+        self.assertEqual(tenant_alias("one_more"),"tenant_one_more")
+        with self.assertRaises(ValueError):
+            tenant_alias("../postgres")
+        with self.assertRaises(LookupError):
+            resolve_tenant("unknown")
+        db={"default":{"ENGINE":"django.db.backends.sqlite3","NAME":":memory:"},
+            "tenant_one_more":{"ENGINE":"django.db.backends.postgresql","NAME":"foodoo_one_more"}}
+        with override_settings(DATABASES=db):
+            tenant=resolve_tenant("one_more")
+            self.assertEqual(tenant.alias,"tenant_one_more")
+            self.assertEqual(tenant.database_name,"foodoo_one_more")
+        with override_settings(DATABASES={"default":db["default"],"tenant_one_more":db["default"]}):
+            with self.assertRaises(ImproperlyConfigured):
+                resolve_tenant("one_more")
+
+class TenantHostRoutingTests(TestCase):
+    def test_two_hosts_choose_distinct_configured_database_aliases(self):
+        from django.test import RequestFactory,override_settings
+        from django.http import JsonResponse
+        from config.tenant_routing import TenantHostMiddleware,TenantDatabaseRouter,current_database
+        dbs={"default":{"ENGINE":"django.db.backends.sqlite3","NAME":":memory:"},
+             "tenant_first":{"ENGINE":"django.db.backends.postgresql","NAME":"foodoo_first"},
+             "tenant_second":{"ENGINE":"django.db.backends.postgresql","NAME":"foodoo_second"}}
+        seen=[]
+        def response(request):
+            seen.append((request.tenant_id,TenantDatabaseRouter().db_for_read(Restaurant)))
+            return JsonResponse({"tenant":request.tenant_id})
+        with override_settings(DATABASES=dbs,FOODOO_TENANT_ROUTING=True,
+            FOODOO_TENANT_HOSTS={"first.example.test":"first","second.example.test":"second"},
+            ALLOWED_HOSTS=["first.example.test","second.example.test","unknown.example.test"]):
+            mw=TenantHostMiddleware(response)
+            factory=RequestFactory()
+            self.assertEqual(mw(factory.get("/",HTTP_HOST="first.example.test")).status_code,200)
+            self.assertEqual(mw(factory.get("/",HTTP_HOST="second.example.test")).status_code,200)
+            self.assertEqual(mw(factory.get("/",HTTP_HOST="unknown.example.test")).status_code,404)
+            self.assertEqual(seen,[("first","tenant_first"),("second","tenant_second")])
+            self.assertIsNone(current_database())
+            self.assertIsNone(TenantDatabaseRouter().db_for_read(Restaurant))

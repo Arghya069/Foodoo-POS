@@ -1,0 +1,108 @@
+name: Foodoo POS CI
+
+on:
+  push:
+    branches: [main, feat/sprint-01-pos-foundation]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Django checks and tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DJANGO_DEBUG: "true"
+      DJANGO_SECRET_KEY: "ci-only-not-for-production"
+      DATABASE_URL: "sqlite:///ci.sqlite3"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install -r requirements.txt
+      - name: Validate model migration consistency
+        run: python manage.py makemigrations --check --dry-run
+      - name: Django system checks
+        run: python manage.py check
+      - name: Apply migrations
+        run: python manage.py migrate --noinput
+      - name: Run POS tests
+        run: python manage.py test --verbosity 2
+
+  frontend:
+    name: React production build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install --no-audit --no-fund
+      - run: npm run build
+
+  postgres:
+    name: PostgreSQL integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: foodoo_test
+          POSTGRES_USER: foodoo
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U foodoo -d foodoo_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DJANGO_DEBUG: "true"
+      DJANGO_SECRET_KEY: "ci-only-not-for-production"
+      DATABASE_URL: "postgresql://foodoo:ci-only-password@localhost:5432/foodoo_test"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install -r requirements.txt
+      - name: PostgreSQL migration check
+        run: python manage.py makemigrations --check --dry-run
+      - name: Apply PostgreSQL migrations
+        run: python manage.py migrate --noinput
+      - name: Test checkout and tenant isolation on PostgreSQL
+        run: python manage.py test --verbosity 2
+      - name: Provision two independent PostgreSQL tenant databases
+        env:
+          PGPASSWORD: ci-only-password
+        run: |
+          psql -h localhost -U foodoo -d postgres -c 'CREATE DATABASE foodoo_tenant_first'
+          psql -h localhost -U foodoo -d postgres -c 'CREATE DATABASE foodoo_tenant_second'
+      - name: Migrate and smoke-test two tenant databases
+        env:
+          DJANGO_ALLOWED_HOSTS: "first.example.test,second.example.test,unknown.example.test"
+          FOODOO_TENANT_ROUTING: "true"
+          FOODOO_TENANT_HOSTS: '{"first.example.test":"first","second.example.test":"second"}'
+          TENANT_DATABASE_URLS: '{"first":"postgresql://foodoo:ci-only-password@localhost:5432/foodoo_tenant_first","second":"postgresql://foodoo:ci-only-password@localhost:5432/foodoo_tenant_second"}'
+        run: |
+          python manage.py tenant_db first --migrate --confirm
+          python manage.py tenant_db second --migrate --confirm
+          python -m pos.tenant_isolation_smoke
