@@ -106,3 +106,23 @@ jobs:
           python manage.py tenant_db first --migrate --confirm
           python manage.py tenant_db second --migrate --confirm
           python -m pos.tenant_isolation_smoke
+
+  fastapi:
+    name: FastAPI and Firestore prototype checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fastapi_backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - run: python -m compileall -q .
+      - name: Check FastAPI module imports without cloud credentials
+        env:
+          FOODOO_SESSION_SECRET: "ci-only-session-secret-long-enough-123456789"
+          FIRESTORE_EMULATOR_HOST: "127.0.0.1:8089"
+          FOODOO_FIRESTORE_PROJECT: "foodoo-test"
+        run: python -c "import app; assert app.app.title.startswith('Foodoo')"
