@@ -2,7 +2,7 @@ name: Foodoo POS CI
 
 on:
   push:
-    branches: [main, feat/sprint-01-pos-foundation]
+    branches: [main, feat/sprint-01-pos-foundation, feat/fastapi-firestore-parity]
   pull_request:
     branches: [main]
   workflow_dispatch:
