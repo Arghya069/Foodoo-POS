@@ -119,3 +119,10 @@ select{display:block;width:100%;padding:12px;border:1px solid #dbe4e2;border-rad
  .workspace-main .products article>button{width:100%;align-self:stretch}
 }
 @media(prefers-reduced-motion:reduce){.app-sidebar,.nav-link{transition:none}}
+
+/* Prevent inherited narrow-screen header/grid rules from overriding the workspace shell. */
+@media(max-width:850px){
+ .workspace-header{flex-wrap:nowrap}
+ .workspace-main>.layout{grid-template-columns:minmax(0,1fr)}
+ .workspace-main .cart{border-left:0;border-top:1px solid var(--fd-line)}
+}
