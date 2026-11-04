@@ -159,8 +159,9 @@ def restaurant(user=Depends(require_user)):
 @app.patch("/api/restaurant/")
 def update_restaurant(changes: dict, user=Depends(roles("admin"))):
     allowed={"name","address","contact_phone","gstin","logo_data","branch_type","branch_name","branch_code","cgst_rate","sgst_rate"}
-    if set(changes)-allowed:
-        raise HTTPException(400,"Unknown restaurant settings")
+    unknown=sorted(set(changes)-allowed)
+    if unknown:
+        raise HTTPException(400,{"message":"Unknown restaurant settings","fields":unknown})
     restaurant_root(user["restaurant_id"]).update(changes)
     return restaurant(user)
 
