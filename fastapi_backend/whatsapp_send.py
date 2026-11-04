@@ -4,10 +4,13 @@ Credential values only from environment/Secret Manager. Never return tokens
 or raw upstream error responses to browser users.
 """
 import io
+import logging
 import os
 import re
 
 import httpx
+
+logger = logging.getLogger("foodoo.whatsapp")
 
 
 class WhatsAppConfigError(Exception):
@@ -99,6 +102,12 @@ def send_receipt_pdf(phone, pdf_bytes, filename, body_parameters=None):
             message_ids = [m.get("id") for m in sent.json().get("messages", [])]
             if not message_ids or not message_ids[0]:
                 raise WhatsAppSendError("WhatsApp did not confirm a message ID")
+    except httpx.HTTPStatusError as exc:
+        # Log the stage/status, never the Authorization header or raw response.
+        stage = "media_upload" if exc.request.url.path.endswith("/media") else "template_send"
+        logger.warning("Meta WhatsApp %s rejected request with HTTP %s", stage, exc.response.status_code)
+        raise WhatsAppSendError("WhatsApp media upload or template send failed") from exc
     except (httpx.HTTPError, KeyError, ValueError) as exc:
+        logger.warning("Meta WhatsApp request failed: %s", type(exc).__name__)
         raise WhatsAppSendError("WhatsApp media upload or template send failed") from exc
     return {"message_id": message_ids[0], "recipient": destination}
