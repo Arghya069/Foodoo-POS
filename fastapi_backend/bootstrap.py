@@ -27,7 +27,7 @@ if restaurant.get().exists or identity.get().exists:
 try:
     restaurant.create({"name":args.restaurant_name,"address":"","contact_phone":"","gstin":"",
                        "branch_type":"main","branch_name":"Main","branch_code":"main",
-                       "logo_data":"","cgst_rate":"2.50","sgst_rate":"2.50"})
+                       "logo_data":"","fssai_license_number":"","cgst_rate":"2.50","sgst_rate":"2.50"})
     identity.create({"username":args.admin_username,"first_name":"","role":"admin","active":True,
                      "restaurant_id":args.restaurant_id,"password_hash":PasswordHash.recommended().hash(password)})
 except AlreadyExists:
