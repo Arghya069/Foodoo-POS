@@ -81,3 +81,27 @@ Current gaps: manual/integration verification against a Firestore emulator,
 historical order and customer import, high-volume indexed history and reports,
 production-grade account provisioning, full receipt visual parity, and
 security review. Keep Django as the baseline until these are resolved.
+
+
+## API contracts and unit tests
+
+FastAPI request and response schemas are defined in `schemas.py` using
+**Pydantic v2**. They document the main API contracts in `/docs`,
+reject unknown writable fields, and prevent internal Firestore properties
+from leaking into public API responses.
+
+Tests use **pytest** rather than unittest:
+
+```bash
+cd fastapi_backend
+source .venv/bin/activate
+pip install -r requirements.txt -r requirements-test.txt
+python -m pytest -q -v
+```
+
+The test suite covers schema validation, receipt rendering, WhatsApp template
+payloads, session ID hashing, and OpenAPI request/response documentation.
+These are not a replacement for end-to-end Firestore integration tests.
+
+The React navigation syntax fix is on this branch; run
+`cd frontend && npm install && npm run build` before starting Vite.
