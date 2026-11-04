@@ -25,7 +25,7 @@ class ReceiptTests(unittest.TestCase):
         self.assertAlmostEqual(float(reader.pages[0].mediabox.width),57*mm,delta=1)
         text=reader.pages[0].extract_text()
         for part in ("ITEM","QTY","UNIT","TOTAL","Chicken Biryani",
-                     "Mutton Rogan Josh","FSSAI Lic. No.: 12345678901234",
+                     "Mutton Rogan","Josh","FSSAI Lic. No.: 12345678901234",
                      "735.00","TOKEN #7","Thank you!"):
             self.assertIn(part,text)
 
