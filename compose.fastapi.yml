@@ -1,0 +1,24 @@
+# Local container smoke test. Uses your existing Firestore project or emulator.
+# To use production Firestore, supply ADC credentials through an explicit
+# read-only mount, not a service-account JSON copied into the image.
+services:
+  api:
+    build: ./fastapi_backend
+    ports:
+      - "127.0.0.1:8001:8080"
+    env_file: ./fastapi_backend/.env
+    environment:
+      FOODOO_COOKIE_SECURE: "false"
+      FOODOO_ALLOWED_ORIGINS: "http://localhost:5173,http://localhost:8088"
+    volumes:
+      - "${HOME}/.config/gcloud/application_default_credentials.json:/credentials/adc.json:ro"
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /credentials/adc.json
+      FOODOO_COOKIE_SECURE: "false"
+      FOODOO_ALLOWED_ORIGINS: "http://localhost:5173,http://localhost:8088"
+  web:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:8088:80"
+    depends_on:
+      - api
