@@ -4,6 +4,7 @@ Proof-of-architecture implementation. Never point the production frontend at
 this API until the parity and migration checklist is completed.
 """
 import os
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
@@ -158,10 +159,15 @@ def restaurant(user=Depends(require_user)):
 
 @app.patch("/api/restaurant/")
 def update_restaurant(changes: dict, user=Depends(roles("admin"))):
-    allowed={"name","address","contact_phone","gstin","logo_data","branch_type","branch_name","branch_code","cgst_rate","sgst_rate"}
+    allowed={"name","address","contact_phone","gstin","fssai_license_number","logo_data","branch_type","branch_name","branch_code","cgst_rate","sgst_rate"}
     unknown=sorted(set(changes)-allowed)
     if unknown:
         raise HTTPException(400,{"message":"Unknown restaurant settings","fields":unknown})
+    if "fssai_license_number" in changes:
+        fssai=str(changes["fssai_license_number"]).strip()
+        if fssai and not re.fullmatch(r"\\d{14}",fssai):
+            raise HTTPException(422,"FSSAI license number must be 14 digits")
+        changes["fssai_license_number"]=fssai
     restaurant_root(user["restaurant_id"]).update(changes)
     return restaurant(user)
 
@@ -449,38 +455,66 @@ def staff_change(staff_id:str,changes:dict,user=Depends(roles("admin"))):
     data=ref.get().to_dict()
     return {"id":staff_id,**{k:data[k] for k in ("username","first_name","role","active")}}
 
+def order_receipt_data(order_id,user):
+    order_ref=restaurant_root(user["restaurant_id"]).collection("orders").document(order_id)
+    order_doc=order_ref.get()
+    if not order_doc.exists:raise HTTPException(404,"Order not found")
+    order=order_doc.to_dict()
+    if order.get("status")!="paid":raise HTTPException(409,"Order not paid yet")
+    restaurant_doc=restaurant_root(user["restaurant_id"]).get()
+    if not restaurant_doc.exists:raise HTTPException(404,"Restaurant missing")
+    return order,restaurant_doc.to_dict()
+
 @app.get("/api/orders/{order_id}/receipt/")
 def receipt(order_id:str,user=Depends(roles("admin","cashier","staff"))):
-    from io import BytesIO
-    from reportlab.pdfgen import canvas
-    from reportlab.lib.units import mm
-    ref=restaurant_root(user["restaurant_id"]).collection("orders").document(order_id)
-    snap=ref.get()
-    if not snap.exists:raise HTTPException(404,"Order not found")
-    row=snap.to_dict()
-    if row["status"]!="paid":raise HTTPException(409,"Order not paid yet")
-    restaurant=restaurant_root(user["restaurant_id"]).get().to_dict()
-    buffer=BytesIO()
-    height=max(120,65+len(row["lines"])*9)*mm
-    sheet=canvas.Canvas(buffer,pagesize=(57*mm,height))
-    pos=height-9*mm
-    def line(value,size=8):
-        nonlocal pos
-        sheet.setFont("Helvetica",size)
-        sheet.drawString(4*mm,pos,str(value)[:43])
-        pos-=6*mm
-    line(restaurant.get("name","Foodoo"),10)
-    line("TOKEN #"+str(row.get("token_number","-")),13)
-    line(row.get("receipt_number",""),7)
-    for item in row["lines"]:
-        line(f'{item["quantity"]} x {item["name"][:17]}  {money(item["line_total_paise"])}')
-    line("Subtotal "+money(row["subtotal_paise"]))
-    line("CGST "+money(row["cgst_paise"]))
-    line("SGST "+money(row["sgst_paise"]))
-    line("TOTAL "+money(row["total_paise"]),10)
-    sheet.showPage();sheet.save()
-    return Response(content=buffer.getvalue(),media_type="application/pdf",
+    from receipt_pdf import build_receipt_pdf
+    order,restaurant=order_receipt_data(order_id,user)
+    pdf=build_receipt_pdf(restaurant,order)
+    return Response(content=pdf,media_type="application/pdf",
                     headers={"Content-Disposition":f'attachment; filename="foodoo-{order_id}.pdf"'})
+
+class ReceiptSendRequest(BaseModel):
+    confirm: bool = True
+
+@app.post("/api/orders/{order_id}/whatsapp/")
+def send_receipt_whatsapp(order_id:str,payload:ReceiptSendRequest,user=Depends(roles("admin","cashier","staff"))):
+    from receipt_pdf import build_receipt_pdf
+    from whatsapp_send import send_receipt_pdf,WhatsAppConfigError,WhatsAppSendError,normalize_phone
+    if not payload.confirm:
+        raise HTTPException(400,"Confirm the WhatsApp receipt request")
+    order,restaurant=order_receipt_data(order_id,user)
+    if not order.get("whatsapp_consent"):
+        raise HTTPException(403,"Customer has not consented to WhatsApp messages")
+    phone=order.get("customer_phone")
+    try:
+        normalize_phone(phone)
+    except ValueError:
+        raise HTTPException(422,"Customer phone number is invalid")
+    # Avoid inadvertent repeated sends. This is a best-effort delivery record,
+    # not an exactly-once guarantee across upstream network failures.
+    ref=restaurant_root(user["restaurant_id"]).collection("whatsapp_receipts").document(order_id)
+    tx=db.transaction()
+    @firestore.transactional
+    def claim(transaction):
+        snap=ref.get(transaction=transaction)
+        if snap.exists and snap.to_dict().get("state") in ("sending","submitted"):
+            return False
+        transaction.set(ref,{"state":"sending","claimed_at":now(),"created_by":user["id"]},merge=True)
+        return True
+    if not claim(tx):
+        raise HTTPException(409,"This receipt is already sending or was submitted")
+    try:
+        filename="foodoo-"+str(order.get("receipt_number") or order_id)+".pdf"
+        result=send_receipt_pdf(phone,build_receipt_pdf(restaurant,order),filename)
+    except WhatsAppConfigError:
+        ref.update({"state":"failed","updated_at":now(),"reason":"configuration"})
+        raise HTTPException(503,"WhatsApp is not configured: set Meta token, phone number ID, template name and language")
+    except WhatsAppSendError:
+        ref.update({"state":"review_required","updated_at":now(),"reason":"upstream_error"})
+        raise HTTPException(502,"Meta did not confirm delivery acceptance. Check status before attempting again")
+    ref.update({"state":"submitted","updated_at":now(),"message_id":result["message_id"],
+                "recipient":result["recipient"],"reason":None})
+    return {"status":"submitted","message_id":result["message_id"]}
 
 @app.get("/api/customers/lookup/")
 def lookup_customer(phone:str="",user=Depends(roles("admin","cashier","staff"))):
