@@ -161,3 +161,90 @@ class WhatsAppStatusResponse(BaseModel):
 class WhatsAppSendResponse(BaseModel):
     status: str
     message_id: str
+
+class SuccessResponse(BaseModel):
+    ok: bool = True
+
+class OrderListRow(BaseModel):
+    id: str
+    status: str
+    total: str
+    receipt_number: str | None = None
+
+class OrderItemResponse(BaseModel):
+    name: str
+    quantity: int
+    unit_price: str
+    total: str
+
+class OrderHistoryRow(BaseModel):
+    id: str
+    status: str
+    receipt_number: str | None = None
+    token_number: int | None = None
+    token_date: str | None = None
+    customer_name: str = ""
+    customer_phone: str = ""
+    payment_method: str = ""
+    whatsapp_consent: bool = False
+    subtotal: str
+    cgst: str
+    sgst: str
+    total: str
+    created_at: str
+    paid_at: str | None = None
+    items: list[OrderItemResponse]
+
+class OrderHistoryResponse(BaseModel):
+    count: int
+    page: int
+    page_size: int
+    results: list[OrderHistoryRow]
+
+class SalesBreakdown(BaseModel):
+    method: str
+    orders: int
+    revenue: str
+
+class SalesByDay(BaseModel):
+    date: str
+    orders: int
+    revenue: str
+
+class SalesReportResponse(BaseModel):
+    start: str
+    end: str
+    orders: int
+    subtotal: str
+    cgst: str
+    sgst: str
+    revenue: str
+    payment_methods: list[SalesBreakdown]
+    daily: list[SalesByDay]
+
+class KitchenItem(BaseModel):
+    name: str
+    quantity: int
+
+class KitchenOrder(BaseModel):
+    id: str
+    token_number: int | None = None
+    token_date: str | None = None
+    paid_at: str | None = None
+    items: list[KitchenItem]
+
+class CustomerSuggestion(BaseModel):
+    customer_name: str = ""
+    customer_phone: str = ""
+    whatsapp_consent: bool = False
+
+class CustomerLookupResponse(BaseModel):
+    customer_name: str = ""
+    whatsapp_consent: bool = False
+
+class SessionResponse(BaseModel):
+    id: str
+    current: bool
+    created_at: datetime
+    last_seen_at: datetime
+    expires_at: datetime
