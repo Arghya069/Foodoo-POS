@@ -24,7 +24,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 PROJECT = os.getenv("FOODOO_FIRESTORE_PROJECT")
 DATABASE = os.getenv("FOODOO_FIRESTORE_DATABASE", "(default)")
 SECRET = os.getenv("FOODOO_SESSION_SECRET", "")
-if len(SECRET) < 32:
+if len(SECRET) < 32 or SECRET == "replace-with-a-long-random-secret":
     raise RuntimeError("FOODOO_SESSION_SECRET must contain at least 32 characters")
 db = firestore.Client(project=PROJECT, database=DATABASE)
 password_hash = PasswordHash.recommended()
