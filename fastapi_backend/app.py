@@ -18,7 +18,10 @@ from fastapi.responses import JSONResponse
 from google.cloud import firestore
 from sessions import new_session,validate_session,revoke_session,revoke_user_sessions,user_sessions
 from pwdlib import PasswordHash
-from pydantic import BaseModel, Field
+from schemas import (Credentials, LoginResponse, MeResponse, RestaurantUpdate, RestaurantResponse,
+    MenuInput, MenuPatch, MenuResponse, LineInput, OrderInput, OrderCreatedResponse,
+    Payment, PaidResponse, ServingUpdate, TokenResponse, StaffCreate, StaffPatch,
+    StaffResponse, ReceiptSendRequest, WhatsAppStatusResponse, WhatsAppSendResponse)
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 PROJECT = os.getenv("FOODOO_FIRESTORE_PROJECT")
@@ -75,34 +78,6 @@ def roles(*allowed):
         return user
     return authorize
 
-class Credentials(BaseModel):
-    username: str
-    password: str
-
-class MenuInput(BaseModel):
-    name: str = Field(min_length=1, max_length=160)
-    price: str
-    description: str = ""
-    food_type: str = "veg"
-    food_subtype: str = "none"
-    category: str = "main_course"
-    image_url: str = ""
-    image_data: str = ""
-    active: bool = True
-
-class LineInput(BaseModel):
-    id: str
-    quantity: int = Field(ge=1, le=999)
-
-class OrderInput(BaseModel):
-    items: list[LineInput]
-    customer_name: str = ""
-    customer_phone: str = ""
-    whatsapp_consent: bool = False
-
-class Payment(BaseModel):
-    payment_method: str
-
 def issue_csrf_token():
     nonce=secrets.token_urlsafe(32)
     signature=hmac.new(SECRET.encode(),nonce.encode(),"sha256").hexdigest()
@@ -140,7 +115,7 @@ def csrf(response: Response):
     response.set_cookie("foodoo_csrf", token, secure=COOKIE_SECURE, httponly=False, samesite="lax", path="/")
     return {"ok":True}
 
-@app.post("/api/auth/login/")
+@app.post("/api/auth/login/",response_model=LoginResponse)
 def login(payload: Credentials, response: Response):
     # Username is globally unique; resolve membership server-side.
     results = list(db.collection("identities").where("username", "==", payload.username).limit(1).stream())
@@ -189,19 +164,20 @@ def logout_all(response:Response,user=Depends(require_user)):
     response.delete_cookie("foodoo_session",path="/",secure=COOKIE_SECURE,httponly=True,samesite="lax")
     return {"ok":True}
 
-@app.get("/api/me/")
+@app.get("/api/me/",response_model=MeResponse)
 def me(user=Depends(require_user)):
     return {"username":user["username"],"role":user["role"],"restaurant_id":user["restaurant_id"]}
 
-@app.get("/api/restaurant/")
+@app.get("/api/restaurant/",response_model=RestaurantResponse)
 def restaurant(user=Depends(require_user)):
     doc=restaurant_root(user["restaurant_id"]).get()
     if not doc.exists:
         raise HTTPException(404, "Restaurant missing")
     return {"id":doc.id,**doc.to_dict()}
 
-@app.patch("/api/restaurant/")
-def update_restaurant(changes: dict, user=Depends(roles("admin"))):
+@app.patch("/api/restaurant/",response_model=RestaurantResponse)
+def update_restaurant(payload: RestaurantUpdate, user=Depends(roles("admin"))):
+    changes=payload.model_dump(exclude_unset=True)
     allowed={"name","address","contact_phone","gstin","fssai_license_number","logo_data","branch_type","branch_name","branch_code","cgst_rate","sgst_rate"}
     unknown=sorted(set(changes)-allowed)
     if unknown:
@@ -219,11 +195,11 @@ def menu_docs(user, active_only=False):
     items=[{"id":snap.id,**snap.to_dict()} for snap in docs]
     return [x for x in items if x.get("active",True)] if active_only else items
 
-@app.get("/api/menu/")
+@app.get("/api/menu/",response_model=list[MenuResponse])
 def menu(user=Depends(roles("admin","cashier","staff"))):
     return sorted(menu_docs(user,active_only=user["role"]!="admin"),key=lambda x:x["name"].lower())
 
-@app.post("/api/menu/",status_code=201)
+@app.post("/api/menu/",status_code=201,response_model=MenuResponse)
 def create_menu(item: MenuInput,user=Depends(roles("admin"))):
     data=item.model_dump()
     data["price_paise"]=as_paise(data.pop("price"))
@@ -232,8 +208,9 @@ def create_menu(item: MenuInput,user=Depends(roles("admin"))):
     ref.set(data)
     return {"id":ref.id,**data}
 
-@app.patch("/api/menu/{item_id}/")
-def update_menu(item_id: str, changes: dict,user=Depends(roles("admin"))):
+@app.patch("/api/menu/{item_id}/",response_model=MenuResponse)
+def update_menu(item_id: str, payload: MenuPatch,user=Depends(roles("admin"))):
+    changes=payload.model_dump(exclude_unset=True)
     ref=restaurant_root(user["restaurant_id"]).collection("menu").document(item_id)
     original=ref.get()
     if not original.exists:raise HTTPException(404,"Dish missing")
@@ -245,7 +222,7 @@ def update_menu(item_id: str, changes: dict,user=Depends(roles("admin"))):
     ref.update(changes)
     return {"id":ref.id,**ref.get().to_dict()}
 
-@app.post("/api/orders/",status_code=201)
+@app.post("/api/orders/",status_code=201,response_model=OrderCreatedResponse)
 def create_order(payload: OrderInput,user=Depends(roles("admin","cashier","staff"))):
     if not payload.items:raise HTTPException(400,"At least one item required")
     root=restaurant_root(user["restaurant_id"])
@@ -285,7 +262,7 @@ def create_order(payload: OrderInput,user=Depends(roles("admin","cashier","staff
     return {"id":order.id,"status":"draft","token_number":number,"token_date":day,
             "subtotal":money(subtotal),"cgst":money(cgst),"sgst":money(sgst),"total":money(subtotal+cgst+sgst)}
 
-@app.post("/api/orders/{order_id}/pay/")
+@app.post("/api/orders/{order_id}/pay/",response_model=PaidResponse)
 def pay(order_id: str,payload: Payment,user=Depends(roles("admin","cashier","staff"))):
     if payload.payment_method not in ("cash","card","upi"):
         raise HTTPException(400,"Invalid payment method")
@@ -306,17 +283,14 @@ def pay(order_id: str,payload: Payment,user=Depends(roles("admin","cashier","sta
             "payment_method":data["payment_method"],"total":money(data["total_paise"]),
             "whatsapp_consent":data.get("whatsapp_consent",False),"token_number":data["token_number"]}
 
-@app.get("/api/tokens/today/")
+@app.get("/api/tokens/today/",response_model=TokenResponse)
 def tokens(user=Depends(roles("admin","cashier","staff"))):
     day=now().astimezone(__import__("zoneinfo").ZoneInfo("Asia/Kolkata")).date().isoformat()
     snap=restaurant_root(user["restaurant_id"]).collection("daily_counters").document(day).get()
     data=snap.to_dict() if snap.exists else {}
     return {"date":day,"last_issued":data.get("last_number",0),"currently_serving":data.get("currently_serving",0)}
 
-class ServingUpdate(BaseModel):
-    currently_serving: int = Field(ge=0)
-
-@app.post("/api/tokens/today/")
+@app.post("/api/tokens/today/",response_model=TokenResponse)
 def set_serving(payload:ServingUpdate,user=Depends(roles("admin","cashier","staff"))):
     day=now().astimezone(__import__("zoneinfo").ZoneInfo("Asia/Kolkata")).date().isoformat()
     ref=restaurant_root(user["restaurant_id"]).collection("daily_counters").document(day)
@@ -443,18 +417,12 @@ def kitchen(user=Depends(roles("admin","chef"))):
                 "items":[{"name":x["name"],"quantity":x["quantity"]} for x in row["lines"]]})
     return results[:50]
 
-class StaffCreate(BaseModel):
-    username: str = Field(min_length=2,max_length=150)
-    first_name: str = ""
-    password: str = Field(min_length=10)
-    role: str
-
-@app.get("/api/staff/")
+@app.get("/api/staff/",response_model=list[StaffResponse])
 def staff(user=Depends(roles("admin"))):
     return [{"id":s.id,**{k:v for k,v in s.to_dict().items() if k in ("username","first_name","role","active")}}
             for s in db.collection("identities").where("restaurant_id","==",user["restaurant_id"]).stream()]
 
-@app.post("/api/staff/",status_code=201)
+@app.post("/api/staff/",status_code=201,response_model=StaffResponse)
 def create_staff(payload:StaffCreate,user=Depends(roles("admin"))):
     if payload.role not in ("admin","cashier","chef","partner"):
         raise HTTPException(400,"Invalid staff role")
@@ -471,8 +439,9 @@ def create_staff(payload:StaffCreate,user=Depends(roles("admin"))):
         raise HTTPException(409,"Username is already taken")
     return {"id":ref.id,"username":payload.username,"first_name":payload.first_name,"role":payload.role,"active":True}
 
-@app.patch("/api/staff/{staff_id}/")
-def staff_change(staff_id:str,changes:dict,user=Depends(roles("admin"))):
+@app.patch("/api/staff/{staff_id}/",response_model=StaffResponse)
+def staff_change(staff_id:str,payload:StaffPatch,user=Depends(roles("admin"))):
+    changes=payload.model_dump(exclude_unset=True)
     ref=db.collection("identities").document(staff_id)
     snap=ref.get()
     if not snap.exists or snap.to_dict().get("restaurant_id")!=user["restaurant_id"]:
@@ -518,7 +487,7 @@ def receipt(order_id:str,user=Depends(roles("admin","cashier","staff"))):
     return Response(content=pdf,media_type="application/pdf",
                     headers={"Content-Disposition":f'attachment; filename="foodoo-{order_id}.pdf"'})
 
-@app.get("/api/orders/{order_id}/whatsapp/")
+@app.get("/api/orders/{order_id}/whatsapp/",response_model=WhatsAppStatusResponse)
 def whatsapp_receipt_status(order_id:str,user=Depends(roles("admin","cashier","staff"))):
     # Verify restaurant ownership before looking up any send-status records.
     ref=restaurant_root(user["restaurant_id"]).collection("orders").document(order_id)
@@ -530,10 +499,7 @@ def whatsapp_receipt_status(order_id:str,user=Depends(roles("admin","cashier","s
     data=record.to_dict()
     return {"status":data.get("state","unknown"),"message_id":data.get("message_id")}
 
-class ReceiptSendRequest(BaseModel):
-    confirm: bool = True
-
-@app.post("/api/orders/{order_id}/whatsapp/")
+@app.post("/api/orders/{order_id}/whatsapp/",response_model=WhatsAppSendResponse)
 def send_receipt_whatsapp(order_id:str,payload:ReceiptSendRequest,user=Depends(roles("admin","cashier","staff"))):
     from receipt_pdf import build_receipt_pdf
     from whatsapp_send import send_receipt_pdf,WhatsAppConfigError,WhatsAppSendError,normalize_phone
