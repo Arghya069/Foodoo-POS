@@ -26,7 +26,7 @@ const[tokenStatus,SetTokenStatus]=useState(null),[servingInput,SetServingInput]=
 async function api(path,method="GET",body){
  const r=await fetch(API+path,{method,credentials:"same-origin",headers:{"Content-Type":"application/json",...(method!=="GET"?{"X-CSRFToken":decodeURIComponent((cookie("foodoo_csrf")||cookie("csrftoken")))}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{})});
  const d=await r.json().catch(()=>({}));
- if(!r.ok)throw new Error(d.detail||Object.entries(d).map(([key,value])=>key+": "+value).join("; ")||"Request failed");
+ if(!r.ok){const detail=typeof d.detail==="string"?d.detail:d.detail?JSON.stringify(d.detail):Object.entries(d).map(([key,value])=>key+": "+value).join("; ");throw new Error(detail||"Request failed")}
  return d
 }
 async function loadAccount(){const [m,r]=await Promise.all([api("/me/"),api("/restaurant/")]);M(m);S(r);Q(["admin","cashier","staff"].includes(m.role)?await api("/menu/"):[]);T(m.role==="chef"?"kitchen":m.role==="partner"?"reports":"pos")}
