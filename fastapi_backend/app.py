@@ -518,6 +518,18 @@ def receipt(order_id:str,user=Depends(roles("admin","cashier","staff"))):
     return Response(content=pdf,media_type="application/pdf",
                     headers={"Content-Disposition":f'attachment; filename="foodoo-{order_id}.pdf"'})
 
+@app.get("/api/orders/{order_id}/whatsapp/")
+def whatsapp_receipt_status(order_id:str,user=Depends(roles("admin","cashier","staff"))):
+    # Verify restaurant ownership before looking up any send-status records.
+    ref=restaurant_root(user["restaurant_id"]).collection("orders").document(order_id)
+    if not ref.get().exists:
+        raise HTTPException(404,"Order not found")
+    record=restaurant_root(user["restaurant_id"]).collection("whatsapp_receipts").document(order_id).get()
+    if not record.exists:
+        return {"status":"not_sent"}
+    data=record.to_dict()
+    return {"status":data.get("state","unknown"),"message_id":data.get("message_id")}
+
 class ReceiptSendRequest(BaseModel):
     confirm: bool = True
 
