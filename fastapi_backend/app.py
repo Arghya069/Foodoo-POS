@@ -5,6 +5,8 @@ this API until the parity and migration checklist is completed.
 """
 import os
 import re
+import hmac
+import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
@@ -101,18 +103,31 @@ class OrderInput(BaseModel):
 class Payment(BaseModel):
     payment_method: str
 
+def issue_csrf_token():
+    nonce=secrets.token_urlsafe(32)
+    signature=hmac.new(SECRET.encode(),nonce.encode(),"sha256").hexdigest()
+    return nonce+"."+signature
+
+def valid_csrf_token(value):
+    if not isinstance(value,str) or "." not in value:
+        return False
+    nonce,sig=value.rsplit(".",1)
+    if len(nonce)>100 or not re.fullmatch(r"[a-zA-Z0-9_-]+",nonce):
+        return False
+    expected=hmac.new(SECRET.encode(),nonce.encode(),"sha256").hexdigest()
+    return hmac.compare_digest(sig,expected)
+
 @app.middleware("http")
 async def protect_mutations(request: Request, call_next):
-    # Explicit CSRF token check for cookie-authenticated API mutations.
-    if request.method in ("POST", "PATCH", "PUT", "DELETE") and request.url.path not in ("/api/auth/login/",):
-        cookie = request.cookies.get("foodoo_csrf")
-        header = request.headers.get("x-csrftoken")
-        if not cookie or not header or not secrets.compare_digest(cookie, header):
-            return JSONResponse({"detail":"CSRF verification failed"}, status_code=403)
-        origin = request.headers.get("origin")
-        allowed = os.getenv("FOODOO_ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+    if request.method in ("POST", "PATCH", "PUT", "DELETE"):
+        cookie=request.cookies.get("foodoo_csrf")
+        header=request.headers.get("x-csrftoken")
+        if not cookie or not header or not hmac.compare_digest(cookie,header) or not valid_csrf_token(cookie):
+            return JSONResponse({"detail":"CSRF verification failed"},status_code=403)
+        origin=request.headers.get("origin")
+        allowed=[x.strip() for x in os.getenv("FOODOO_ALLOWED_ORIGINS","http://localhost:5173").split(",") if x.strip()]
         if origin and origin not in allowed:
-            return JSONResponse({"detail":"Untrusted origin"}, status_code=403)
+            return JSONResponse({"detail":"Untrusted origin"},status_code=403)
     return await call_next(request)
 
 @app.get("/healthz")
@@ -121,7 +136,7 @@ def health():
 
 @app.get("/api/auth/csrf/")
 def csrf(response: Response):
-    token = secrets.token_urlsafe(32)
+    token = issue_csrf_token()
     response.set_cookie("foodoo_csrf", token, secure=COOKIE_SECURE, httponly=False, samesite="lax", path="/")
     return {"ok":True}
 
