@@ -1,0 +1,16 @@
+# Keep secrets, credentials and large development artifacts out of Docker context.
+.git
+**/.env
+**/.env.*
+**/.venv
+**/__pycache__
+**/*.pyc
+**/node_modules
+**/dist
+**/.pytest_cache
+**/.coverage
+*.json
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/vite.config.js
+# The Dockerfile explicitly COPYs only the required app paths.
