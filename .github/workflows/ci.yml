@@ -107,6 +107,21 @@ jobs:
           python manage.py tenant_db second --migrate --confirm
           python -m pos.tenant_isolation_smoke
 
+  container:
+    name: Single-image Foodoo Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build React + FastAPI application image
+        run: docker build --file Dockerfile.foodoo --tag foodoo:ci .
+      - name: Verify image contains bootstrap and compiled React assets
+        run: |
+          docker run --rm -e FOODOO_SESSION_SECRET -e FOODOO_FIRESTORE_PROJECT -e FIRESTORE_EMULATOR_HOST --entrypoint=python foodoo:ci -c "from pathlib import Path; import server; assert Path('/app/dist/index.html').exists(); assert Path('/app/bootstrap.py').exists()"
+        env:
+          FOODOO_SESSION_SECRET: ci-only-session-secret-long-enough-123456789
+          FOODOO_FIRESTORE_PROJECT: foodoo-test
+          FIRESTORE_EMULATOR_HOST: 127.0.0.1:8089
+
   fastapi:
     name: FastAPI and Firestore prototype checks
     runs-on: ubuntu-latest
