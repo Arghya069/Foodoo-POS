@@ -118,8 +118,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m pip install -r requirements.txt
+      - run: python -m pip install -r requirements.txt -r requirements-test.txt
       - run: python -m compileall -q .
+      - name: Test thermal receipt, WhatsApp template and sessions
+        run: python -m unittest discover -p 'test_*.py' -v
       - name: Check FastAPI module imports without cloud credentials
         env:
           FOODOO_SESSION_SECRET: "ci-only-session-secret-long-enough-123456789"
