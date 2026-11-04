@@ -21,7 +21,9 @@ from pwdlib import PasswordHash
 from schemas import (Credentials, LoginResponse, MeResponse, RestaurantUpdate, RestaurantResponse,
     MenuInput, MenuPatch, MenuResponse, LineInput, OrderInput, OrderCreatedResponse,
     Payment, PaidResponse, ServingUpdate, TokenResponse, StaffCreate, StaffPatch,
-    StaffResponse, ReceiptSendRequest, WhatsAppStatusResponse, WhatsAppSendResponse)
+    StaffResponse, ReceiptSendRequest, WhatsAppStatusResponse, WhatsAppSendResponse,
+    SuccessResponse, OrderListRow, OrderHistoryResponse, SalesReportResponse,
+    KitchenOrder, CustomerSuggestion, CustomerLookupResponse, SessionResponse)
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 PROJECT = os.getenv("FOODOO_FIRESTORE_PROJECT")
@@ -139,14 +141,14 @@ def logout(request:Request,response: Response):
     response.delete_cookie("foodoo_session", path="/", secure=COOKIE_SECURE, httponly=True, samesite="lax")
     return {"ok":True}
 
-@app.get("/api/auth/sessions/")
+@app.get("/api/auth/sessions/",response_model=list[SessionResponse])
 def list_sessions(user=Depends(require_user)):
     entries=user_sessions(db,user["id"])
     return [{"id":item["id"],"current":item["id"]==user["_session_id"],
              "created_at":item["created_at"],"last_seen_at":item["last_seen_at"],
              "expires_at":item["expires_at"]} for item in entries]
 
-@app.delete("/api/auth/sessions/{session_id}/")
+@app.delete("/api/auth/sessions/{session_id}/",response_model=SuccessResponse)
 def end_session(session_id:str,request:Request,response:Response,user=Depends(require_user)):
     if not re.fullmatch(r"[a-f0-9]{64}",session_id):raise HTTPException(400,"Invalid session")
     ref=db.collection("sessions").document(session_id)
@@ -158,7 +160,7 @@ def end_session(session_id:str,request:Request,response:Response,user=Depends(re
         response.delete_cookie("foodoo_session",path="/",secure=COOKIE_SECURE,httponly=True,samesite="lax")
     return {"ok":True}
 
-@app.post("/api/auth/logout-all/")
+@app.post("/api/auth/logout-all/",response_model=SuccessResponse)
 def logout_all(response:Response,user=Depends(require_user)):
     revoke_user_sessions(db,user["id"])
     response.delete_cookie("foodoo_session",path="/",secure=COOKIE_SECURE,httponly=True,samesite="lax")
@@ -322,12 +324,12 @@ def orders_query(user):
     # Bounded Firestore scan for prototype. Replace with indexed cursor queries.
     return [d for d in restaurant_root(user["restaurant_id"]).collection("orders").order_by("created_at",direction=firestore.Query.DESCENDING).limit(1000).stream()]
 
-@app.get("/api/orders/")
+@app.get("/api/orders/",response_model=list[OrderListRow])
 def list_orders(user=Depends(roles("admin","cashier","staff"))):
     return [{"id":d.id,"status":d.to_dict()["status"],"total":money(d.to_dict()["total_paise"]),
              "receipt_number":d.to_dict().get("receipt_number")} for d in orders_query(user)[:50]]
 
-@app.get("/api/orders/history/")
+@app.get("/api/orders/history/",response_model=OrderHistoryResponse)
 def history(start:str|None=None,end:str|None=None,status:str="all",q:str="",page:int=1,
             user=Depends(roles("admin","cashier","staff"))):
     from datetime import date
@@ -363,7 +365,7 @@ def paid_report_rows(user,start=None,end=None):
         if lower<=day<=upper:paid.append((doc.id,record,day))
     return lower,upper,paid
 
-@app.get("/api/reports/sales/")
+@app.get("/api/reports/sales/",response_model=SalesReportResponse)
 def sales_report(start:str|None=None,end:str|None=None,user=Depends(roles("admin","partner"))):
     lower,upper,paid=paid_report_rows(user,start,end)
     sums={key:sum(row[1][key] for row in paid) for key in ("subtotal_paise","cgst_paise","sgst_paise","total_paise")}
@@ -406,7 +408,7 @@ def sales_export(start:str|None=None,end:str|None=None,file_type:str="csv",user=
     return Response(content=out.getvalue(),media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition":f'attachment; filename="{filename}"'})
 
-@app.get("/api/kitchen/")
+@app.get("/api/kitchen/",response_model=list[KitchenOrder])
 def kitchen(user=Depends(roles("admin","chef"))):
     results=[]
     for doc in orders_query(user):
@@ -550,7 +552,7 @@ def send_receipt_whatsapp(order_id:str,payload:ReceiptSendRequest,user=Depends(r
                 "recipient":result["recipient"],"reason":None})
     return {"status":"submitted","message_id":result["message_id"]}
 
-@app.get("/api/customers/lookup/")
+@app.get("/api/customers/lookup/",response_model=CustomerLookupResponse)
 def lookup_customer(phone:str="",user=Depends(roles("admin","cashier","staff"))):
     if not phone or len(phone)>25:raise HTTPException(400,"Invalid phone number")
     orders=restaurant_root(user["restaurant_id"]).collection("orders").where("customer_phone","==",phone).limit(100).stream()
@@ -559,7 +561,7 @@ def lookup_customer(phone:str="",user=Depends(roles("admin","cashier","staff")))
     recent=max(paid,key=lambda o:o.get("paid_at") or datetime.min.replace(tzinfo=timezone.utc))
     return {"customer_name":recent.get("customer_name",""),"whatsapp_consent":recent.get("whatsapp_consent",False)}
 
-@app.get("/api/customers/suggest/")
+@app.get("/api/customers/suggest/",response_model=list[CustomerSuggestion])
 def suggest_customers(q:str="",user=Depends(roles("admin","cashier","staff"))):
     # Temporary bounded lookup until dedicated customer index is added.
     if len(q)<3:return []
