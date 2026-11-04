@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from google.cloud import firestore
-from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+from sessions import new_session,validate_session,revoke_session,revoke_user_sessions,user_sessions
 from pwdlib import PasswordHash
 from pydantic import BaseModel, Field
 
@@ -25,7 +25,6 @@ SECRET = os.getenv("FOODOO_SESSION_SECRET", "")
 if len(SECRET) < 32:
     raise RuntimeError("FOODOO_SESSION_SECRET must contain at least 32 characters")
 db = firestore.Client(project=PROJECT, database=DATABASE)
-signer = URLSafeTimedSerializer(SECRET, salt="foodoo-auth-v1")
 password_hash = PasswordHash.recommended()
 COOKIE_SECURE = os.getenv("FOODOO_COOKIE_SECURE", "true").lower() == "true"
 app = FastAPI(title="Foodoo FastAPI + Firestore", version="0.1.0")
@@ -55,19 +54,17 @@ def restaurant_root(tenant):
     return db.collection("restaurants").document(tenant)
 
 def require_user(request: Request):
-    token = request.cookies.get("foodoo_session")
-    try:
-        claims = signer.loads(token or "", max_age=8*60*60)
-    except (BadSignature, SignatureExpired):
-        raise HTTPException(401, "Login required")
-    user_ref = db.collection("identities").document(claims["uid"])
+    session = validate_session(db, request.cookies.get("foodoo_session"))
+    if not session:
+        raise HTTPException(401,"Session expired or revoked; sign in again")
+    user_ref = db.collection("identities").document(session["user_id"])
     user = user_ref.get()
     if not user.exists or not user.to_dict().get("active", True):
         raise HTTPException(401, "Account unavailable")
     data = user.to_dict()
-    if data["restaurant_id"] != claims["rid"]:
+    if data["restaurant_id"] != session["restaurant_id"]:
         raise HTTPException(401, "Invalid membership")
-    return {"id":user.id, **data}
+    return {"id":user.id, **data, "_session_id":session["id"]}
 
 def roles(*allowed):
     def authorize(user=Depends(require_user)):
@@ -137,13 +134,44 @@ def login(payload: Credentials, response: Response):
     user = results[0].to_dict()
     if not password_hash.verify(payload.password, user["password_hash"]):
         raise HTTPException(401, "Invalid username or password")
-    response.set_cookie("foodoo_session", signer.dumps({"uid":results[0].id,"rid":user["restaurant_id"]}),
+    response.set_cookie("foodoo_session", new_session(db, results[0].id, user["restaurant_id"]),
                         max_age=8*60*60, secure=COOKIE_SECURE, httponly=True, samesite="lax", path="/")
     return {"username":payload.username}
 
 @app.post("/api/auth/logout/")
-def logout(response: Response):
-    response.delete_cookie("foodoo_session", path="/")
+def logout(request:Request,response: Response):
+    token=request.cookies.get("foodoo_session")
+    if token:
+        # Old stateless cookies are ignored after this migration.
+        from google.api_core.exceptions import NotFound
+        try:revoke_session(db,token)
+        except NotFound:pass
+    response.delete_cookie("foodoo_session", path="/", secure=COOKIE_SECURE, httponly=True, samesite="lax")
+    return {"ok":True}
+
+@app.get("/api/auth/sessions/")
+def list_sessions(user=Depends(require_user)):
+    entries=user_sessions(db,user["id"])
+    return [{"id":item["id"],"current":item["id"]==user["_session_id"],
+             "created_at":item["created_at"],"last_seen_at":item["last_seen_at"],
+             "expires_at":item["expires_at"]} for item in entries]
+
+@app.delete("/api/auth/sessions/{session_id}/")
+def end_session(session_id:str,request:Request,response:Response,user=Depends(require_user)):
+    if not re.fullmatch(r"[a-f0-9]{64}",session_id):raise HTTPException(400,"Invalid session")
+    ref=db.collection("sessions").document(session_id)
+    snap=ref.get()
+    if not snap.exists or snap.to_dict().get("user_id")!=user["id"]:
+        raise HTTPException(404,"Session not found")
+    ref.update({"revoked":True})
+    if session_id==user["_session_id"]:
+        response.delete_cookie("foodoo_session",path="/",secure=COOKIE_SECURE,httponly=True,samesite="lax")
+    return {"ok":True}
+
+@app.post("/api/auth/logout-all/")
+def logout_all(response:Response,user=Depends(require_user)):
+    revoke_user_sessions(db,user["id"])
+    response.delete_cookie("foodoo_session",path="/",secure=COOKIE_SECURE,httponly=True,samesite="lax")
     return {"ok":True}
 
 @app.get("/api/me/")
@@ -452,6 +480,8 @@ def staff_change(staff_id:str,changes:dict,user=Depends(roles("admin"))):
             raise HTTPException(400,"Password must be at least 10 characters")
         changes["password_hash"]=password_hash.hash(changes.pop("password"))
     ref.update(changes)
+    if changes.get("active") is False or "password_hash" in changes or "role" in changes:
+        revoke_user_sessions(db,staff_id)
     data=ref.get().to_dict()
     return {"id":staff_id,**{k:data[k] for k in ("username","first_name","role","active")}}
 
