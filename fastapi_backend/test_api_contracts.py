@@ -107,3 +107,20 @@ def test_response_models_retain_frontend_contract():
 def test_login_request_redacts_unknown_fields():
     with pytest.raises(ValidationError):
         Credentials(username="admin",password="strong",admin=True)
+
+
+def test_fastapi_openapi_documents_request_and_response_models(monkeypatch):
+    monkeypatch.setenv("FOODOO_SESSION_SECRET", "test-secret-longer-than-thirty-two-characters")
+    monkeypatch.setenv("FOODOO_FIRESTORE_PROJECT", "foodoo-test")
+    monkeypatch.setenv("FIRESTORE_EMULATOR_HOST", "127.0.0.1:8089")
+    from fastapi.testclient import TestClient
+    from app import app as fastapi_app
+
+    client = TestClient(fastapi_app)
+    spec = client.get("/openapi.json")
+    assert spec.status_code == 200
+    routes = spec.json()["paths"]
+    update = routes["/api/restaurant/"]["patch"]
+    assert update["requestBody"]["content"]["application/json"]["schema"]["$ref"].endswith("RestaurantUpdate")
+    assert update["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith("RestaurantResponse")
+    assert routes["/api/orders/"]["post"]["responses"]["201"]["content"]["application/json"]["schema"]["$ref"].endswith("OrderCreatedResponse")
