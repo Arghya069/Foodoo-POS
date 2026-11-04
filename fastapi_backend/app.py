@@ -542,15 +542,26 @@ def send_receipt_whatsapp(order_id:str,payload:ReceiptSendRequest,user=Depends(r
     @firestore.transactional
     def claim(transaction):
         snap=ref.get(transaction=transaction)
-        if snap.exists and snap.to_dict().get("state") in ("sending","submitted"):
+        if snap.exists and snap.to_dict().get("state") in ("sending","submitted","review_required"):
             return False
         transaction.set(ref,{"state":"sending","claimed_at":now(),"created_by":user["id"]},merge=True)
         return True
     if not claim(tx):
         raise HTTPException(409,"This receipt is already sending or was submitted")
     try:
+        fields=[x.strip() for x in os.getenv("WHATSAPP_TEMPLATE_BODY_FIELDS","").split(",") if x.strip()]
+        values={
+            "customer_name":order.get("customer_name") or "Customer",
+            "receipt_number":order.get("receipt_number") or order_id,
+            "total":money(order["total_paise"]),
+            "token_number":str(order.get("token_number","")),
+            "restaurant_name":restaurant.get("name","Foodoo"),
+        }
+        if any(field not in values for field in fields):
+            raise WhatsAppConfigError("Unsupported template body field")
         filename="foodoo-"+str(order.get("receipt_number") or order_id)+".pdf"
-        result=send_receipt_pdf(phone,build_receipt_pdf(restaurant,order),filename)
+        result=send_receipt_pdf(phone,build_receipt_pdf(restaurant,order),filename,
+                                body_parameters=[values[field] for field in fields])
     except WhatsAppConfigError:
         ref.update({"state":"failed","updated_at":now(),"reason":"configuration"})
         raise HTTPException(503,"WhatsApp is not configured: set Meta token, phone number ID, template name and language")
