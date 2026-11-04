@@ -165,7 +165,7 @@ def update_restaurant(changes: dict, user=Depends(roles("admin"))):
         raise HTTPException(400,{"message":"Unknown restaurant settings","fields":unknown})
     if "fssai_license_number" in changes:
         fssai=str(changes["fssai_license_number"]).strip()
-        if fssai and not re.fullmatch(r"\\d{14}",fssai):
+        if fssai and not re.fullmatch(r"\d{14}",fssai):
             raise HTTPException(422,"FSSAI license number must be 14 digits")
         changes["fssai_license_number"]=fssai
     restaurant_root(user["restaurant_id"]).update(changes)
