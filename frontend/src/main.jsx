@@ -86,7 +86,7 @@ function browserDeviceId(){
  }catch{return ""}
 }
 async function api(path,method="GET",body){
- const r=await fetch(API+path,{method,credentials:"same-origin",headers:{"Content-Type":"application/json",...(method!=="GET"?{"X-Foodooo-Device-ID":browserDeviceId(),"X-Foodooo-Device-Label":browserDeviceLabel()}:{}),...(method!=="GET"?{"X-CSRFToken":decodeURIComponent((cookie("foodoo_csrf")||cookie("csrftoken")))}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{})});
+ const r=await fetch(API+path,{method,credentials:"same-origin",headers:{"Content-Type":"application/json",...(method!=="GET"?{"X-Foodoo-Device-ID":browserDeviceId(),"X-Foodoo-Device-Label":browserDeviceLabel()}:{}),...(method!=="GET"?{"X-CSRFToken":decodeURIComponent((cookie("foodoo_csrf")||cookie("csrftoken")))}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{})});
  const d=await r.json().catch(()=>({}));
  if(!r.ok){const detail=typeof d.detail==="string"?d.detail:d.detail?JSON.stringify(d.detail):Object.entries(d).map(([key,value])=>key+": "+value).join("; ");throw new Error(detail||"Request failed")}
  return d
