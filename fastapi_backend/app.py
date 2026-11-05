@@ -17,13 +17,14 @@ from fastapi import FastAPI, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from google.cloud import firestore
 from sessions import new_session,validate_session,revoke_session,revoke_user_sessions,user_sessions
+from order_audit import actor_details
 from pwdlib import PasswordHash
 from schemas import (Credentials, LoginResponse, MeResponse, RestaurantUpdate, RestaurantResponse,
     MenuInput, MenuPatch, MenuResponse, LineInput, OrderInput, OrderCreatedResponse,
     Payment, PaidResponse, ServingUpdate, TokenResponse, StaffCreate, StaffPatch,
     StaffResponse, ReceiptSendRequest, WhatsAppStatusResponse, WhatsAppSendResponse,
     SuccessResponse, OrderListRow, OrderHistoryResponse, SalesReportResponse,
-    KitchenOrder, CustomerSuggestion, CustomerLookupResponse, SessionResponse)
+    KitchenOrder, CustomerSuggestion, CustomerLookupResponse, SessionResponse, OrderAuditResponse)
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 PROJECT = os.getenv("FOODOO_FIRESTORE_PROJECT")
@@ -225,7 +226,7 @@ def update_menu(item_id: str, payload: MenuPatch,user=Depends(roles("admin"))):
     return {"id":ref.id,**ref.get().to_dict()}
 
 @app.post("/api/orders/",status_code=201,response_model=OrderCreatedResponse)
-def create_order(payload: OrderInput,user=Depends(roles("admin","cashier","staff"))):
+def create_order(payload: OrderInput,request:Request,user=Depends(roles("admin","cashier","staff"))):
     if not payload.items:raise HTTPException(400,"At least one item required")
     root=restaurant_root(user["restaurant_id"])
     restaurant=root.get()
@@ -255,7 +256,7 @@ def create_order(payload: OrderInput,user=Depends(roles("admin","cashier","staff
         number=(snap.to_dict().get("last_number",0) if snap.exists else 0)+1
         tx.set(counter,{"last_number":number,"currently_serving":snap.to_dict().get("currently_serving",0) if snap.exists else 0})
         tx.create(order,{"created_at":now(),"status":"draft","token_number":number,"token_date":day,
-           "created_by":user["id"],"customer_name":payload.customer_name,"customer_phone":payload.customer_phone,
+           "created_by":user["id"],"created_by_username":user.get("username",""),"creation_audit":actor_details(request,user),"customer_name":payload.customer_name,"customer_phone":payload.customer_phone,
            "whatsapp_consent":payload.whatsapp_consent,"lines":lines,
            "subtotal_paise":subtotal,"cgst_paise":cgst,"sgst_paise":sgst,"total_paise":subtotal+cgst+sgst,
            "cgst_rate":config.get("cgst_rate","2.50"),"sgst_rate":config.get("sgst_rate","2.50")})
@@ -265,7 +266,7 @@ def create_order(payload: OrderInput,user=Depends(roles("admin","cashier","staff
             "subtotal":money(subtotal),"cgst":money(cgst),"sgst":money(sgst),"total":money(subtotal+cgst+sgst)}
 
 @app.post("/api/orders/{order_id}/pay/",response_model=PaidResponse)
-def pay(order_id: str,payload: Payment,user=Depends(roles("admin","cashier","staff"))):
+def pay(order_id: str,payload: Payment,request:Request,user=Depends(roles("admin","cashier","staff"))):
     if payload.payment_method not in ("cash","card","upi"):
         raise HTTPException(400,"Invalid payment method")
     order=restaurant_root(user["restaurant_id"]).collection("orders").document(order_id)
@@ -277,7 +278,8 @@ def pay(order_id: str,payload: Payment,user=Depends(roles("admin","cashier","sta
         data=snap.to_dict()
         if data["status"]=="paid":return data
         updated={"status":"paid","payment_method":payload.payment_method,"paid_at":now(),
-                 "receipt_number":"FD-"+now().strftime("%Y%m%d")+"-"+order_id[:12].upper()}
+                 "receipt_number":"FD-"+now().strftime("%Y%m%d")+"-"+order_id[:12].upper(),
+                 "payment_audit":actor_details(request,user)}
         transaction.update(order,updated)
         return {**data,**updated}
     data=commit(tx)
@@ -312,6 +314,7 @@ def order_view(doc):
     o=doc.to_dict()
     return {"id":doc.id,"status":o["status"],"receipt_number":o.get("receipt_number"),
             "token_number":o.get("token_number"),"token_date":o.get("token_date"),
+            "created_by_username":o.get("created_by_username") or o.get("created_by","Unknown"),
             "customer_name":o.get("customer_name",""),"customer_phone":o.get("customer_phone",""),
             "payment_method":o.get("payment_method",""),"whatsapp_consent":o.get("whatsapp_consent",False),
             "subtotal":money(o["subtotal_paise"]),"cgst":money(o["cgst_paise"]),
@@ -328,6 +331,17 @@ def orders_query(user):
 def list_orders(user=Depends(roles("admin","cashier","staff"))):
     return [{"id":d.id,"status":d.to_dict()["status"],"total":money(d.to_dict()["total_paise"]),
              "receipt_number":d.to_dict().get("receipt_number")} for d in orders_query(user)[:50]]
+
+@app.get("/api/orders/{order_id}/audit/",response_model=OrderAuditResponse)
+def order_audit(order_id:str,user=Depends(roles("admin"))):
+    doc=restaurant_root(user["restaurant_id"]).collection("orders").document(order_id).get()
+    if not doc.exists:
+        raise HTTPException(404,"Order not found")
+    data=doc.to_dict()
+    return {"order_id":doc.id,"created_at":data["created_at"],
+            "created_by":data.get("created_by_username") or data.get("created_by") or "Unknown",
+            "creation":data.get("creation_audit"),
+            "payment":data.get("payment_audit")}
 
 @app.get("/api/orders/history/",response_model=OrderHistoryResponse)
 def history(start:str|None=None,end:str|None=None,status:str="all",q:str="",page:int=1,
