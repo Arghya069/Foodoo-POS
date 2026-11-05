@@ -349,8 +349,11 @@ def order_view(doc):
                       "total":money(x["line_total_paise"])} for x in o.get("lines",[])]}
 
 def orders_query(user):
-    # Bounded Firestore scan for prototype. Replace with indexed cursor queries.
-    return [d for d in restaurant_root(user["restaurant_id"]).collection("orders").order_by("created_at",direction=firestore.Query.DESCENDING).limit(1000).stream()]
+    # Correctness first: do not silently omit older orders from financial reports
+    # after the first 1,000 transactions. Move to date-indexed cursor queries
+    # before scaling to restaurants with large order histories.
+    return [d for d in restaurant_root(user["restaurant_id"]).collection("orders").order_by(
+        "created_at",direction=firestore.Query.DESCENDING).stream()]
 
 @app.get("/api/orders/",response_model=list[OrderListRow])
 def list_orders(user=Depends(roles("admin","cashier","staff"))):
