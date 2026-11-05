@@ -46,12 +46,14 @@ def request(ip="203.0.113.44",headers=None):
 def test_device_and_authenticated_actor_capture():
     browser_id=str(uuid.uuid4())
     req=request(headers={"x-foodoo-device-id":browser_id,
+                         "x-foodoo-device-label":"Cash Counter 1",
                          "user-agent":"Foodoo-Test Browser",
                          "x-forwarded-for":"8.8.8.8"})
     recorded=actor_details(req,{"id":"admin","username":"cashier1",
                                 "role":"cashier","_session_id":"opaque-hash"})
     assert recorded["username"]=="cashier1"
     assert recorded["device"]["browser_device_id"]==browser_id
+    assert recorded["device"]["device_label"]=="Cash Counter 1"
     assert recorded["device"]["observed_ip"]=="203.0.113.44"
     assert recorded["device"]["user_agent"]=="Foodoo-Test Browser"
     # Never accept the caller's arbitrary X-Forwarded-For as authoritative.
@@ -66,3 +68,8 @@ def test_invalid_browser_identifier_is_discarded(id_value):
 
 def test_unavailable_network_address_is_not_invented():
     assert peer_address(request("not-an-ip")) is None
+
+
+def test_device_label_sanitized():
+    req=request(headers={"x-foodoo-device-label":"Counter<script>alert(1)</script>"})
+    assert "<" not in (device_details(req)["device_label"] or "")
