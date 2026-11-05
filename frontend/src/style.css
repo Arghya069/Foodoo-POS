@@ -126,3 +126,11 @@ select{display:block;width:100%;padding:12px;border:1px solid #dbe4e2;border-rad
  .workspace-main>.layout{grid-template-columns:minmax(0,1fr)}
  .workspace-main .cart{border-left:0;border-top:1px solid var(--fd-line)}
 }
+
+/* Order-history actions and audit affordance */
+.history-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:14px 0}
+.history-actions button{width:auto}
+.history-actions small{color:#7e6a53;font-size:12px}
+.history-creator{display:flex!important;justify-content:flex-start!important;gap:7px!important;color:#62736d;font-size:12px}
+.audit-button{margin-top:6px;font-size:12px;padding:8px 12px}
+@media(max-width:640px){.history-actions{flex-direction:column;align-items:stretch}.history-actions button{width:100%}.audit-button{width:100%}}
