@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from google.cloud import firestore
 from sessions import new_session,validate_session,revoke_session,revoke_user_sessions,user_sessions
 from order_audit import actor_details
+from whatsapp_policy import authorize_receipt_send,SendDenied
 from pwdlib import PasswordHash
 from schemas import (Credentials, LoginResponse, MeResponse, RestaurantUpdate, RestaurantResponse,
     MenuInput, MenuPatch, MenuResponse, LineInput, OrderInput, OrderCreatedResponse,
@@ -544,22 +545,12 @@ def perform_whatsapp_send(order_id,payload,request,user,resend=False):
     def claim(transaction):
         snap=ref.get(transaction=transaction)
         data=snap.to_dict() if snap.exists else {}
-        state=data.get("state","not_sent")
-        if state in ("sending","review_required"):
-            raise HTTPException(409,"Receipt send is pending or needs administrator review")
-        if resend:
-            if state!="submitted":
-                raise HTTPException(409,"Receipt must be sent successfully before it can be resent")
-            last=data.get("last_sent_at")
-            if last and (now()-last).total_seconds()<120:
-                raise HTTPException(429,"Wait at least two minutes between receipt sends")
-        elif state=="submitted":
-            raise HTTPException(409,"Receipt already submitted; use Resend in Order History")
-        count=int(data.get("attempt_count",0))
-        if count>=3:
-            raise HTTPException(429,"Maximum three WhatsApp send attempts reached for this order")
+        try:
+            next_count=authorize_receipt_send(data,resend=resend,at=now())
+        except SendDenied as failure:
+            raise HTTPException(failure.status_code,failure.detail)
         transaction.set(ref,{"state":"sending","claimed_at":now(),
-                             "created_by":user["id"],"attempt_count":count+1,
+                             "created_by":user["id"],"attempt_count":next_count,
                              "last_attempt_by":actor_details(request,user)},merge=True)
     claim(tx)
     try:
