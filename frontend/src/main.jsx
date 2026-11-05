@@ -29,13 +29,41 @@ function WhatsAppInbox({api}){
 }
 function SessionManagement({api,onLogOut}){
  const[sessions,SetSessions]=useState([]),[error,SetError]=useState(""),[busy,SetBusy]=useState(false);
+ const[passwords,SetPasswords]=useState({current_password:"",new_password:"",confirm_password:""});
+ const[changingPassword,SetChangingPassword]=useState(false);
+ const changeOwnPassword=async(event)=>{
+  event.preventDefault();
+  if(changingPassword)return;
+  if(passwords.new_password.length<12){SetError("New password must be at least 12 characters");return}
+  if(passwords.new_password!==passwords.confirm_password){SetError("New passwords do not match");return}
+  if(passwords.current_password===passwords.new_password){SetError("Choose a different password");return}
+  SetChangingPassword(true);
+  try{
+   await api("/auth/change-password/","POST",{
+    current_password:passwords.current_password,
+    new_password:passwords.new_password
+   });
+   SetPasswords({current_password:"",new_password:"",confirm_password:""});
+   showToast("Password updated. Sign in again on all devices.");
+   onLogOut();
+  }catch(e){SetError(e.message)}
+  finally{SetChangingPassword(false)}
+ };
  const[deviceLabel,SetDeviceLabel]=useState(()=>{try{return localStorage.getItem("foodoo_device_label")||""}catch{return ""}});
  const saveDeviceLabel=()=>{try{localStorage.setItem("foodoo_device_label",deviceLabel.trim().slice(0,60));SetError("");showToast("Device label saved")}catch{SetError("Local storage unavailable")}};
  const refresh=async()=>{try{SetSessions(await api("/auth/sessions/"));SetError("")}catch(e){SetError(e.message)}};
  useEffect(()=>{refresh()},[]);
  const revoke=async(id,current)=>{SetBusy(true);try{await api("/auth/sessions/"+id+"/","DELETE");if(current){onLogOut()}else{await refresh();showToast("Session revoked")}}catch(e){SetError(e.message)}finally{SetBusy(false)}};
  const all=async()=>{if(!(await confirmAction({title:"Sign out everywhere?",text:"All active Foodooo sessions for this account will be revoked, including this device.",confirmText:"Sign out all",danger:true})))return;SetBusy(true);try{await api("/auth/logout-all/","POST",{});onLogOut()}catch(e){SetError(e.message)}finally{SetBusy(false)}};
- return <main className="admin wider"><h1>Account sessions</h1><p>Sessions expire after 8 hours, or after 60 minutes of inactivity. You can revoke access on another device here.</p>{error&&<p className="notice">{error}</p>}<button disabled={busy} onClick={all}>Sign out on all devices</button><div className="panel"><h2>Register this browser / POS counter</h2><p>Give this browser a recognizable label, such as Cash Counter 1 or Manager Laptop. This label is not hardware verification.</p><label>Device label<input maxLength={60} value={deviceLabel} placeholder="Cash Counter 1" onChange={e=>SetDeviceLabel(e.target.value)}/></label><button onClick={saveDeviceLabel}>Save device label</button></div><div className="staff-list">{sessions.map(x=><div className="panel staff-row" key={x.id}><div><strong>{x.current?"This device":"Other session"}</strong><p>Last active: {new Date(x.last_seen_at).toLocaleString("en-IN")} · Expires: {new Date(x.expires_at).toLocaleString("en-IN")}</p></div><button className="secondary" disabled={busy} onClick={()=>revoke(x.id,x.current)}>Revoke</button></div>)}</div></main>
+ return <main className="admin wider"><h1>Account sessions</h1><p>Sessions expire after 8 hours, or after 60 minutes of inactivity. You can revoke access on another device here.</p>{error&&<p className="notice">{error}</p>}<button disabled={busy} onClick={all}>Sign out on all devices</button>
+ <form className="panel password-change-panel" onSubmit={changeOwnPassword}>
+  <h2>Change password</h2>
+  <p>Available to every staff role. Changing your password signs out every active session, including this device.</p>
+  <label>Current password<input type="password" autoComplete="current-password" required value={passwords.current_password} onChange={e=>SetPasswords(v=>({...v,current_password:e.target.value}))}/></label>
+  <label>New password (at least 12 characters)<input type="password" autoComplete="new-password" minLength={12} maxLength={256} required value={passwords.new_password} onChange={e=>SetPasswords(v=>({...v,new_password:e.target.value}))}/></label>
+  <label>Confirm new password<input type="password" autoComplete="new-password" minLength={12} maxLength={256} required value={passwords.confirm_password} onChange={e=>SetPasswords(v=>({...v,confirm_password:e.target.value}))}/></label>
+  <button type="submit" disabled={changingPassword}>{changingPassword?"Updating password…":"Update password"}</button>
+ </form><div className="panel"><h2>Register this browser / POS counter</h2><p>Give this browser a recognizable label, such as Cash Counter 1 or Manager Laptop. This label is not hardware verification.</p><label>Device label<input maxLength={60} value={deviceLabel} placeholder="Cash Counter 1" onChange={e=>SetDeviceLabel(e.target.value)}/></label><button onClick={saveDeviceLabel}>Save device label</button></div><div className="staff-list">{sessions.map(x=><div className="panel staff-row" key={x.id}><div><strong>{x.current?"This device":"Other session"}</strong><p>Last active: {new Date(x.last_seen_at).toLocaleString("en-IN")} · Expires: {new Date(x.expires_at).toLocaleString("en-IN")}</p></div><button className="secondary" disabled={busy} onClick={()=>revoke(x.id,x.current)}>Revoke</button></div>)}</div></main>
 }
 const NAV_GROUPS=[
  {title:"OPERATIONS",items:[{id:"pos",label:"Cashier POS",icon:"pos",roles:["admin","cashier","staff"]},{id:"history",label:"Order history",icon:"history",roles:["admin","cashier","staff"]},{id:"kitchen",label:"Kitchen queue",icon:"kitchen",roles:["admin","chef"]}]},
