@@ -515,7 +515,7 @@ def receipt(order_id:str,user=Depends(roles("admin","cashier","staff"))):
     order,restaurant=order_receipt_data(order_id,user)
     pdf=build_receipt_pdf(restaurant,order)
     return Response(content=pdf,media_type="application/pdf",
-                    headers={"Content-Disposition":f'attachment; filename="foodoo-{order_id}.pdf"'})
+                    headers={"Content-Disposition":f'attachment; filename="foodoo-{order_id}.pdf"',"Cache-Control":"no-store"})
 
 @app.get("/api/orders/{order_id}/whatsapp/",response_model=WhatsAppStatusResponse)
 def whatsapp_receipt_status(order_id:str,user=Depends(roles("admin","cashier","staff"))):
