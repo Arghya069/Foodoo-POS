@@ -106,7 +106,7 @@ def build_receipt_pdf(restaurant,order):
         item_height=sum(max(1,len(parts))*4.2+1.5 for _,parts in group)
         height_mm=(6+header_mm+(overflow_text_mm if continued else 0)+
                    item_height+(footer_mm if last else 5)+8)
-        height_mm=max(90,height_mm)
+        height_mm=max(118,height_mm)
         if height_mm>MAX_PAGE_MM:
             raise ValueError("Receipt page height exceeds PDF limit")
         pdf.setPageSize((WIDTH,height_mm*mm))
