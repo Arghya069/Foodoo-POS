@@ -113,8 +113,8 @@ def persist_meta_events(db,payload,expected_phone_id=None):
             if not isinstance(value,dict):
                 continue
             phone_id=str((value.get("metadata") or {}).get("phone_number_id") or "")
-            if expected_phone_id and phone_id and phone_id!=expected_phone_id:
-                logger.warning("Ignoring event from different WhatsApp phone number ID")
+            if expected_phone_id and phone_id!=expected_phone_id:
+                logger.info("Ignoring Meta event without matching WhatsApp phone number ID")
                 continue
             field=str(change.get("field") or "unknown")[:60]
             for message in (value.get("messages") or []):
@@ -197,8 +197,11 @@ def create_webhook_receiver(db):
             payload=json.loads(raw)
         except (UnicodeDecodeError,json.JSONDecodeError):
             raise HTTPException(400,"Invalid JSON")
+        expected_phone_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID","").strip()
+        if not expected_phone_id:
+            raise HTTPException(503,"WhatsApp phone number ID not configured")
         try:
-            counts=persist_meta_events(db,payload,os.getenv("WHATSAPP_PHONE_NUMBER_ID") or None)
+            counts=persist_meta_events(db,payload,expected_phone_id)
         except ValueError:
             raise HTTPException(400,"Invalid WhatsApp payload")
         except Exception:
