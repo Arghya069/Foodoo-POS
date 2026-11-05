@@ -81,6 +81,9 @@ def require_user(request: Request):
     data = user.to_dict()
     if data["restaurant_id"] != session["restaurant_id"]:
         raise HTTPException(401, "Invalid membership")
+    changed_at=data.get("password_changed_at")
+    if changed_at and session.get("created_at") and session["created_at"]<=changed_at:
+        raise HTTPException(401,"Password changed; sign in again")
     return {"id":user.id, **data, "_session_id":session["id"]}
 
 def roles(*allowed):
