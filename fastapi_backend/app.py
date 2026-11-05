@@ -8,6 +8,7 @@ import re
 import hmac
 import hashlib
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
@@ -270,10 +271,31 @@ def create_order(payload: OrderInput,request:Request,user=Depends(roles("admin",
     sgst=tax(subtotal,config.get("sgst_rate","2.50"))
     day=now().astimezone(__import__("zoneinfo").ZoneInfo("Asia/Kolkata")).date().isoformat()
     counter=root.collection("daily_counters").document(day)
-    order=root.collection("orders").document()
+    order_key=request.headers.get("x-foodoo-order-request-id","")
+    if order_key:
+        try:
+            key=uuid.UUID(order_key)
+            if key.version!=4:
+                raise ValueError()
+        except (ValueError,AttributeError):
+            raise HTTPException(422,"Order idempotency key must be a UUIDv4")
+        # The user ID is part of the key to prevent cross-account collisions.
+        stable_id=hashlib.sha256(
+            (user["restaurant_id"]+":"+user["id"]+":"+str(key)).encode()
+        ).hexdigest()[:40]
+        order=root.collection("orders").document(stable_id)
+    else:
+        order=root.collection("orders").document()
     transaction=db.transaction()
     @firestore.transactional
     def persist(tx):
+        if order_key:
+            already=order.get(transaction=tx)
+            if already.exists:
+                previous=already.to_dict()
+                if previous.get("created_by")!=user["id"] or previous["status"]!="draft":
+                    raise HTTPException(409,"Order request already completed; check Order History")
+                return previous["token_number"],previous
         snap=counter.get(transaction=tx)
         number=(snap.to_dict().get("last_number",0) if snap.exists else 0)+1
         tx.set(counter,{"last_number":number,"currently_serving":snap.to_dict().get("currently_serving",0) if snap.exists else 0})
@@ -284,8 +306,14 @@ def create_order(payload: OrderInput,request:Request,user=Depends(roles("admin",
            "cgst_rate":config.get("cgst_rate","2.50"),"sgst_rate":config.get("sgst_rate","2.50")})
         tx.create(root.collection("order_audit").document(order.id),{"created_at":now(),
            "creation":actor_details(request,user),"expires_at":now()+timedelta(days=30)})
-        return number
-    number=persist(transaction)
+        return number,None
+    number,previous=persist(transaction)
+    if previous:
+        return {"id":order.id,"status":previous["status"],"token_number":number,
+                "token_date":previous["token_date"],
+                "subtotal":money(previous["subtotal_paise"]),
+                "cgst":money(previous["cgst_paise"]),"sgst":money(previous["sgst_paise"]),
+                "total":money(previous["total_paise"])}
     return {"id":order.id,"status":"draft","token_number":number,"token_date":day,
             "subtotal":money(subtotal),"cgst":money(cgst),"sgst":money(sgst),"total":money(subtotal+cgst+sgst)}
 
