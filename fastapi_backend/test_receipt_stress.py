@@ -56,3 +56,21 @@ def test_height_grows_with_more_items():
     big=PdfReader(BytesIO(build_receipt_pdf(profile,make_order(50)))).pages[0]
     assert float(big.mediabox.height)>float(small.mediabox.height)+200*mm
     assert "FSSAI" not in small.extract_text()
+
+
+def test_extreme_order_continues_without_cutting_items_or_duplicating_totals():
+    # Larger than a PDF single-page height. The receipt must continue instead
+    # of dropping lines or silently truncating the PDF.
+    restaurant={"name":"1More","fssai_license_number":"12345678901234"}
+    count=1000
+    reader=PdfReader(BytesIO(build_receipt_pdf(restaurant,make_order(count))))
+    assert len(reader.pages)>=2
+    all_text="\n".join(page.extract_text() for page in reader.pages)
+    for i in range(count):
+        assert f"Order item {i:04d}" in all_text
+    assert all_text.count("Thank you!")==1
+    assert all_text.count("FSSAI Lic. No.: 12345678901234")==1
+    assert "Continued on next page" in all_text
+    for page in reader.pages:
+        assert abs(float(page.mediabox.width)-57*mm)<1
+        assert float(page.mediabox.height)<14000
