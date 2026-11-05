@@ -179,6 +179,7 @@ class OrderItemResponse(BaseModel):
 
 class OrderHistoryRow(BaseModel):
     id: str
+    created_by_username: str = "Unknown"
     status: str
     receipt_number: str | None = None
     token_number: int | None = None
@@ -248,3 +249,22 @@ class SessionResponse(BaseModel):
     created_at: datetime
     last_seen_at: datetime
     expires_at: datetime
+
+class AuditDevice(BaseModel):
+    browser_device_id: str | None = None
+    observed_ip: str | None = None
+    user_agent: str | None = None
+
+class AuditActor(BaseModel):
+    user_id: str
+    username: str
+    role: str
+    session_id: str | None = None
+    device: AuditDevice
+
+class OrderAuditResponse(BaseModel):
+    order_id: str
+    created_at: datetime
+    created_by: str
+    creation: AuditActor | None = None
+    payment: AuditActor | None = None
