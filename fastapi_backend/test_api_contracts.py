@@ -41,12 +41,22 @@ def test_receipt_57mm_columns_fssai_and_totals(receipt_data):
         assert part in text
 
 
-def test_fssai_missing_is_explicit_in_receipt(receipt_data):
+def test_optional_fssai_and_gstin_are_omitted_when_blank(receipt_data):
     restaurant,order=receipt_data
-    restaurant={**restaurant,"fssai_license_number":""}
+    restaurant={**restaurant,"fssai_license_number":"","gstin":""}
     page=PdfReader(BytesIO(build_receipt_pdf(restaurant,order))).pages[0]
-    assert "FSSAI license: Not configured" in page.extract_text()
-    assert "Thank you!" in page.extract_text()
+    text=page.extract_text()
+    assert "FSSAI" not in text
+    assert "GSTIN" not in text
+    assert "Thank you!" in text
+
+
+def test_configured_fssai_and_gstin_both_print(receipt_data):
+    restaurant,order=receipt_data
+    restaurant={**restaurant,"gstin":"22AAAAA0000A1Z5"}
+    text=PdfReader(BytesIO(build_receipt_pdf(restaurant,order))).pages[0].extract_text()
+    assert "GSTIN: 22AAAAA0000A1Z5" in text
+    assert "FSSAI Lic. No.: 12345678901234" in text
 
 
 def test_long_receipt_still_has_fssai_before_thank_you(receipt_data):
