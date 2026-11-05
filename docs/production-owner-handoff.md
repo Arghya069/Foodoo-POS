@@ -283,3 +283,117 @@ continues to manage its own cashiers/menus/accounts in its own app.
 - Cloud Run secrets: https://docs.cloud.google.com/run/docs/configuring/services/secrets
 - Deploy an image: https://docs.cloud.google.com/run/docs/deploying
 - Firestore TTL: https://firebase.google.com/docs/firestore/ttl
+
+## 11. Meta WhatsApp callbacks (delivery status, replies and feedback)
+
+**New integrated FastAPI webhook:** `GET/POST /webhooks/meta` on the same
+Cloud Run service as Foodoo. It verifies the Meta challenge and signs POST
+requests with `WHATSAPP_APP_SECRET`. This does **not** require a separate
+Flask/PubSub deployment for initial single-restaurant operations.
+
+Two additional secrets are required:
+
+- `WHATSAPP_APP_SECRET`: Meta **App Settings → Basic → App Secret**.
+  This is distinct from the `WHATSAPP_ACCESS_TOKEN` used for sending.
+- `WHATSAPP_VERIFY_TOKEN`: a random token we generate; enter the same
+  string in the Meta Webhooks form.
+
+Create the secrets in the **restaurant's** GCP project:
+
+```bash
+gcloud secrets create foodoo-meta-app-secret --replication-policy=automatic --project="$PROJECT"
+read -rsp "Meta App Secret: " META_APP_SECRET; echo
+printf %s "$META_APP_SECRET" | gcloud secrets versions add foodoo-meta-app-secret \
+  --data-file=- --project="$PROJECT"
+unset META_APP_SECRET
+
+gcloud secrets create foodoo-meta-verify-token --replication-policy=automatic --project="$PROJECT"
+openssl rand -hex 32 | gcloud secrets versions add foodoo-meta-verify-token \
+  --data-file=- --project="$PROJECT"
+
+for NAME in foodoo-meta-app-secret foodoo-meta-verify-token; do
+  gcloud secrets add-iam-policy-binding "$NAME" \
+    --member="serviceAccount:$SA" --role="roles/secretmanager.secretAccessor" \
+    --project="$PROJECT"
+done
+
+gcloud run services update "$SERVICE" --region="$REGION" --project="$PROJECT" \
+  --update-secrets="WHATSAPP_APP_SECRET=foodoo-meta-app-secret:1,WHATSAPP_VERIFY_TOKEN=foodoo-meta-verify-token:1"
+```
+
+Retrieve the verify token **only while configuring the Meta developer portal**:
+
+```bash
+gcloud secrets versions access 1 --secret=foodoo-meta-verify-token --project="$PROJECT"
+```
+
+Keep this token private. In Meta for Developers → your App → WhatsApp →
+**Configuration** → Webhooks, enter:
+
+- Callback URL: `https://YOUR-FOODOO-CLOUD-RUN-URL/webhooks/meta`
+  (replace with the actual deployed `$URL`).
+- Verify token: the exact secret value created above.
+- Click **Verify and Save**.
+- Subscribe to the `messages` webhook field; that carries customer replies
+  and outgoing delivery statuses. Subscribe additional fields for template
+  quality/account events only if they are useful.
+
+The same app secret must match the Meta app that owns the WhatsApp number.
+Meta must be able to access this HTTPS endpoint publicly. Request signature
+validation makes the endpoint different from authenticated POS routes: the
+CSRF middleware exempts **only** this exact webhook path; the receiver
+validates `X-Hub-Signature-256` over the raw bytes and refuses unsigned POSTs.
+
+### What is stored
+
+- `whatsapp_inbox`: inbound text, button replies, quick-reply feedback and
+  bounded metadata. Admin sees the 50 newest in **WhatsApp activity**.
+- `whatsapp_status`: latest sent/delivered/read/failed state per Meta message
+  ID, ordered by event timestamp; stale updates cannot overwrite newer status.
+- `whatsapp_events`: other subscribed Meta feedback/account events.
+- `whatsapp_message_links`: connects each sent receipt's Meta message ID
+  back to the Foodoo order, including resends.
+
+Messages are deduplicated by Meta message ID; account events by fingerprint.
+No auto-reply is sent, and incoming text does not change orders or payments.
+The webhook returns 503 when Firestore cannot persist an event so Meta can
+retry rather than having us falsely acknowledge delivery.
+
+### Retention
+
+The inbox and other events have a 90-day `expires_at` value; status events
+have 180 days. Configure Firestore TTL for each collection group:
+
+```bash
+gcloud firestore fields ttls update expires_at --collection-group=whatsapp_inbox \
+  --enable-ttl --project="$PROJECT"
+gcloud firestore fields ttls update expires_at --collection-group=whatsapp_events \
+  --enable-ttl --project="$PROJECT"
+gcloud firestore fields ttls update expires_at --collection-group=whatsapp_status \
+  --enable-ttl --project="$PROJECT"
+```
+
+TTL only applies after the policy is enabled and deletes asynchronously.
+Review access, backup retention, and customer privacy before production.
+
+### Acceptance test
+
+1. Confirm Meta webhook verification succeeds.
+2. Send a new PDF receipt to a consented test customer.
+3. Verify Meta sends `sent`/`delivered`/`read` status events.
+4. Reply from the customer's WhatsApp number; check the admin
+   **WhatsApp activity** view and linked order.
+5. Send a button/interactive feedback reply (if the approved template
+   includes one), and verify readable feedback appears.
+6. Confirm a forged/unsigned webhook POST returns 403 and does not write.
+7. Test Meta retries and duplicate events; no duplicate inbox rows.
+8. Confirm only admins can use `/api/whatsapp/inbox/` and
+   `/api/whatsapp/statuses/`.
+
+Production phone subscriptions must be associated with the correct Meta WABA.
+The webhook callback cannot be registered until the Cloud Run service has a
+public HTTPS URL.
+
+Official Meta docs:
+- https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/overview
+- https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages
