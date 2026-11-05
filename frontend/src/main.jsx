@@ -22,11 +22,13 @@ function KitchenQueue({api}){
 }
 function SessionManagement({api,onLogOut}){
  const[sessions,SetSessions]=useState([]),[error,SetError]=useState(""),[busy,SetBusy]=useState(false);
+ const[deviceLabel,SetDeviceLabel]=useState(()=>{try{return localStorage.getItem("foodoo_device_label")||""}catch{return ""}});
+ const saveDeviceLabel=()=>{try{localStorage.setItem("foodoo_device_label",deviceLabel.trim().slice(0,60));SetError("Device label saved for future orders")}catch{SetError("Local storage unavailable")}};
  const refresh=async()=>{try{SetSessions(await api("/auth/sessions/"));SetError("")}catch(e){SetError(e.message)}};
  useEffect(()=>{refresh()},[]);
  const revoke=async(id,current)=>{SetBusy(true);try{await api("/auth/sessions/"+id+"/","DELETE");if(current){onLogOut()}else await refresh()}catch(e){SetError(e.message)}finally{SetBusy(false)}};
  const all=async()=>{if(!window.confirm("Sign out of all your Foodoo sessions?"))return;SetBusy(true);try{await api("/auth/logout-all/","POST",{});onLogOut()}catch(e){SetError(e.message)}finally{SetBusy(false)}};
- return <main className="admin wider"><h1>Account sessions</h1><p>Sessions expire after 8 hours, or after 60 minutes of inactivity. You can revoke access on another device here.</p>{error&&<p className="notice">{error}</p>}<button disabled={busy} onClick={all}>Sign out on all devices</button><div className="staff-list">{sessions.map(x=><div className="panel staff-row" key={x.id}><div><strong>{x.current?"This device":"Other session"}</strong><p>Last active: {new Date(x.last_seen_at).toLocaleString("en-IN")} · Expires: {new Date(x.expires_at).toLocaleString("en-IN")}</p></div><button className="secondary" disabled={busy} onClick={()=>revoke(x.id,x.current)}>Revoke</button></div>)}</div></main>
+ return <main className="admin wider"><h1>Account sessions</h1><p>Sessions expire after 8 hours, or after 60 minutes of inactivity. You can revoke access on another device here.</p>{error&&<p className="notice">{error}</p>}<button disabled={busy} onClick={all}>Sign out on all devices</button><div className="panel"><h2>Register this browser / POS counter</h2><p>Give this browser a recognizable label, such as Cash Counter 1 or Manager Laptop. This label is not hardware verification.</p><label>Device label<input maxLength={60} value={deviceLabel} placeholder="Cash Counter 1" onChange={e=>SetDeviceLabel(e.target.value)}/></label><button onClick={saveDeviceLabel}>Save device label</button></div><div className="staff-list">{sessions.map(x=><div className="panel staff-row" key={x.id}><div><strong>{x.current?"This device":"Other session"}</strong><p>Last active: {new Date(x.last_seen_at).toLocaleString("en-IN")} · Expires: {new Date(x.expires_at).toLocaleString("en-IN")}</p></div><button className="secondary" disabled={busy} onClick={()=>revoke(x.id,x.current)}>Revoke</button></div>)}</div></main>
 }
 const NAV_GROUPS=[
  {title:"OPERATIONS",items:[{id:"pos",label:"Cashier POS",icon:"pos",roles:["admin","cashier","staff"]},{id:"history",label:"Order history",icon:"history",roles:["admin","cashier","staff"]},{id:"kitchen",label:"Kitchen queue",icon:"kitchen",roles:["admin","chef"]}]},
@@ -63,6 +65,9 @@ const[navOpen,SetNavOpen]=useState(false);
 const navigate=(page)=>{T(page);SetNavOpen(false);window.scrollTo({top:0,behavior:"instant"});};
 useEffect(()=>{if(!navOpen)return;const handler=(event)=>{if(event.key==="Escape")SetNavOpen(false)};document.addEventListener("keydown",handler);return()=>document.removeEventListener("keydown",handler)},[navOpen]);
 const[tokenStatus,SetTokenStatus]=useState(null),[servingInput,SetServingInput]=useState(""),[history,SetHistory]=useState(null),[report,SetReport]=useState(null),[filterQ,SetFilterQ]=useState(""),[filterStatus,SetFilterStatus]=useState("all"),[rangeStart,SetRangeStart]=useState(()=>{const d=new Date();d.setDate(d.getDate()-29);return d.toLocaleDateString("en-CA")}),[rangeEnd,SetRangeEnd]=useState(()=>new Date().toLocaleDateString("en-CA")),[historyPage,SetHistoryPage]=useState(1),[historyLoading,SetHistoryLoading]=useState(false),[showPassword,SetShowPassword]=useState(false),[photoName,SetPhotoName]=useState(""),[uploading,SetUploading]=useState(false),[booting,SetBooting]=useState(true),[loggingIn,SetLoggingIn]=useState(false),[suggestions,SetSuggestions]=useState([]),[paymentMethod,SetPaymentMethod]=useState("cash"),[phoneLookup,SetPhoneLookup]=useState(""),[search,Search]=useState(""),[editing,E]=useState(null),[username,U]=useState("admin"),[password,P]=useState(""),[auth,A]=useState(""),[me,M]=useState(null),[profile,S]=useState(null),[menu,Q]=useState([]),[cart,C]=useState({}),[customer,N]=useState({customer_name:"",customer_phone:""}),[order,O]=useState(null),[sendingWhatsapp,SetSendingWhatsapp]=useState(false),[whatsappResult,SetWhatsappResult]=useState(""),[tab,T]=useState("pos"),[newItem,I]=useState({name:"",price:"",description:"",image_url:"",food_type:"veg",food_subtype:"none",category:"main_course"}),[message,G]=useState("");
+function browserDeviceLabel(){
+ try{return (localStorage.getItem("foodoo_device_label")||"").slice(0,60)}catch{return ""}
+}
 function browserDeviceId(){
  try{
    let id=localStorage.getItem("foodoo_browser_device_id");
@@ -71,7 +76,7 @@ function browserDeviceId(){
  }catch{return ""}
 }
 async function api(path,method="GET",body){
- const r=await fetch(API+path,{method,credentials:"same-origin",headers:{"Content-Type":"application/json",...(method!=="GET"?{"X-Foodoo-Device-ID":browserDeviceId()}:{}),...(method!=="GET"?{"X-CSRFToken":decodeURIComponent((cookie("foodoo_csrf")||cookie("csrftoken")))}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{})});
+ const r=await fetch(API+path,{method,credentials:"same-origin",headers:{"Content-Type":"application/json",...(method!=="GET"?{"X-Foodoo-Device-ID":browserDeviceId(),"X-Foodoo-Device-Label":browserDeviceLabel()}:{}),...(method!=="GET"?{"X-CSRFToken":decodeURIComponent((cookie("foodoo_csrf")||cookie("csrftoken")))}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{})});
  const d=await r.json().catch(()=>({}));
  if(!r.ok){const detail=typeof d.detail==="string"?d.detail:d.detail?JSON.stringify(d.detail):Object.entries(d).map(([key,value])=>key+": "+value).join("; ");throw new Error(detail||"Request failed")}
  return d
@@ -150,6 +155,7 @@ async function viewOrderAudit(item){
   const payment=data.payment;
   const describe=(actor)=>actor?[
     "Staff: "+actor.username+" ("+actor.role+")",
+    "Device label: "+(actor.device?.device_label||"Unlabelled browser"),
     "Browser ID: "+(actor.device?.browser_device_id||"Not supplied"),
     "Observed IP: "+(actor.device?.observed_ip||"Unavailable"),
     "Browser: "+(actor.device?.user_agent||"Unknown")
