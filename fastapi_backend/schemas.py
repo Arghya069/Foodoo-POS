@@ -251,6 +251,7 @@ class SessionResponse(BaseModel):
     expires_at: datetime
 
 class AuditDevice(BaseModel):
+    device_label: str | None = None
     browser_device_id: str | None = None
     observed_ip: str | None = None
     user_agent: str | None = None
