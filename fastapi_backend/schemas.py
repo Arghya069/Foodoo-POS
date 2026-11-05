@@ -157,6 +157,9 @@ class ReceiptSendRequest(StrictRequest):
 class WhatsAppStatusResponse(BaseModel):
     status: str
     message_id: str | None = None
+    delivery_status: str | None = None
+    delivery_timestamp: datetime | None = None
+    error_codes: list[str] = Field(default_factory=list)
 
 class WhatsAppSendResponse(BaseModel):
     status: str
@@ -269,3 +272,12 @@ class OrderAuditResponse(BaseModel):
     created_by: str
     creation: AuditActor | None = None
     payment: AuditActor | None = None
+
+class WhatsAppInboxItem(BaseModel):
+    id: str
+    message_id: str
+    sender: str
+    message_type: str
+    body: str
+    context_message_id: str = ""
+    received_at: datetime
