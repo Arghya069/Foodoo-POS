@@ -22,10 +22,10 @@ function KitchenQueue({api}){
  return <main className="admin wider"><h1>Kitchen queue</h1><p>Latest paid orders and their preparation items.</p><button onClick={refresh}>Refresh queue</button>{error&&<p className="notice">{error}</p>}<div className="menu-list">{orders.map(o=><div className="panel" key={o.id}><h2>Token #{o.token_number||"—"}</h2><small>{o.paid_at?new Date(o.paid_at).toLocaleString("en-IN"):""}</small>{o.items.map((x,i)=><p key={i}>{x.quantity} × {x.name}</p>)}</div>)}</div></main>
 }
 function WhatsAppInbox({api}){
- const [items,SetItems]=useState([]),[loading,SetLoading]=useState(true),[error,SetError]=useState("");
- const refresh=async()=>{SetLoading(true);try{SetItems(await api("/whatsapp/inbox/"));SetError("")}catch(e){SetError(e.message)}finally{SetLoading(false)}};
+ const [items,SetItems]=useState([]),[statuses,SetStatuses]=useState([]),[loading,SetLoading]=useState(true),[error,SetError]=useState("");
+ const refresh=async()=>{SetLoading(true);try{const [messages,events]=await Promise.all([api("/whatsapp/inbox/"),api("/whatsapp/statuses/")]);SetItems(messages);SetStatuses(events);SetError("")}catch(e){SetError(e.message)}finally{SetLoading(false)}};
  useEffect(()=>{refresh()},[]);
- return <main className="admin wider"><div className="inbox-heading"><div><h1>WhatsApp replies</h1><p>Incoming customer replies and feedback. Messages are read-only; no automatic response is sent.</p></div><button onClick={refresh} disabled={loading}>{loading?"Loading…":"Refresh"}</button></div>{error&&<p className="notice">{error}</p>}<div className="inbox-list">{items.length===0&&!loading&&<div className="panel">No WhatsApp replies have been received yet. Verify the Meta webhook and its messages subscription.</div>}{items.map(item=><article className="panel inbox-item" key={item.id}><div className="inbox-item-top"><strong>{item.sender||"Customer"}</strong><small>{new Date(item.received_at).toLocaleString("en-IN")} · {item.message_type}</small></div><p>{item.body||"Message without text"}</p></article>)}</div></main>
+ return <main className="admin wider"><div className="inbox-heading"><div><h1>WhatsApp activity</h1><p>Customer replies and Meta delivery updates. Read-only; no automatic responses are sent.</p></div><button onClick={refresh} disabled={loading}>{loading?"Loading…":"Refresh"}</button></div>{error&&<p className="notice">{error}</p>}<h2>Customer replies</h2><div className="inbox-list">{items.length===0&&!loading&&<div className="panel">No replies yet. Make sure Meta's messages webhook is subscribed.</div>}{items.map(item=><article className="panel inbox-item" key={item.id}><div className="inbox-item-top"><strong>{item.sender||"Customer"}</strong><small>{new Date(item.received_at).toLocaleString("en-IN")} · {item.message_type}</small></div><p>{item.body||"Message without text"}</p>{item.order_id&&<small>Related order: {item.order_id}</small>}</article>)}</div><h2>Delivery updates</h2><div className="inbox-list">{statuses.length===0&&!loading&&<div className="panel">No delivery status events yet.</div>}{statuses.map(event=><article className="panel inbox-item" key={event.id}><div className="inbox-item-top"><strong>{event.status.toUpperCase()}</strong><small>{new Date(event.event_at).toLocaleString("en-IN")}</small></div><p>Recipient: {event.recipient||"Unknown"}</p>{event.error_codes.length>0&&<small>Meta error codes: {event.error_codes.join(", ")}</small>}</article>)}</div></main>
 }
 function SessionManagement({api,onLogOut}){
  const[sessions,SetSessions]=useState([]),[error,SetError]=useState(""),[busy,SetBusy]=useState(false);
@@ -39,7 +39,7 @@ function SessionManagement({api,onLogOut}){
 }
 const NAV_GROUPS=[
  {title:"OPERATIONS",items:[{id:"pos",label:"Cashier POS",icon:"pos",roles:["admin","cashier","staff"]},{id:"history",label:"Order history",icon:"history",roles:["admin","cashier","staff"]},{id:"kitchen",label:"Kitchen queue",icon:"kitchen",roles:["admin","chef"]}]},
- {title:"INSIGHTS",items:[{id:"reports",label:"Sales reports",icon:"reports",roles:["admin","partner"]},{id:"inbox",label:"WhatsApp replies",icon:"inbox",roles:["admin"]}]},
+ {title:"INSIGHTS",items:[{id:"reports",label:"Sales reports",icon:"reports",roles:["admin","partner"]},{id:"inbox",label:"WhatsApp activity",icon:"inbox",roles:["admin"]}]},
  {title:"MANAGEMENT",items:[{id:"menu",label:"Menu management",icon:"menu",roles:["admin"]},{id:"staff",label:"Team & roles",icon:"staff",roles:["admin"]},{id:"admin",label:"Restaurant settings",icon:"settings",roles:["admin"]}]}
 ];
 const ICON_PATHS={
@@ -66,7 +66,7 @@ function WorkspaceNav({role,tab,onNavigate,onLogout,open,onClose,restaurant,user
  <div className="sidebar-footer"><button className={tab==="sessions"?"nav-link active":"nav-link"} type="button" aria-current={tab==="sessions"?"page":undefined} onClick={()=>onNavigate("sessions")}><NavIcon name="sessions"/><span>Account sessions</span></button><button className="nav-link logout-link" type="button" onClick={()=>{onClose();onLogout()}}><NavIcon name="logout"/><span>Sign out</span></button><div className="sidebar-user"><span className="user-avatar">{(username||"U").slice(0,1).toUpperCase()}</span><div><strong>{username}</strong><small>{role==="staff"?"Cashier":role==="partner"?"Partner / viewer":role.charAt(0).toUpperCase()+role.slice(1)}</small></div><span className="online-indicator" aria-label="Signed in"/></div></div>
  </aside></>
 }
-const PAGE_TITLES={pos:"Cashier POS",history:"Order history",kitchen:"Kitchen queue",reports:"Sales reports",inbox:"WhatsApp replies",menu:"Menu management",staff:"Team & roles",admin:"Restaurant settings",sessions:"Account sessions"};
+const PAGE_TITLES={pos:"Cashier POS",history:"Order history",kitchen:"Kitchen queue",reports:"Sales reports",inbox:"WhatsApp activity",menu:"Menu management",staff:"Team & roles",admin:"Restaurant settings",sessions:"Account sessions"};
 function App(){
 const historyRequest=useRef(0),reportRequest=useRef(0);
 const customerLookupRequest=useRef(0);
