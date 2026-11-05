@@ -237,7 +237,8 @@ These must be actual test results, not assumptions from a passing build:
 - [ ] Create an order as cashier, pay via Cash/UPI, verify token issued once.
 - [ ] Try duplicate payment: no double charge/paid transition.
 - [ ] Download receipt; check four-column layout, 14-digit FSSAI and taxes.
-- [ ] In Order History, inspect creator; admin can inspect separate audit detail.
+- [ ] In **Sessions**, save a counter label, create an order; verify Order
+      History displays creator and admin can inspect label/browser/peer IP.
 - [ ] Confirm the network peer IP matches available infrastructure evidence;
       the browser-reported device ID is NOT proof of a physical terminal.
 - [ ] Send a consented WhatsApp PDF; view it on recipient device.
@@ -254,8 +255,9 @@ These must be actual test results, not assumptions from a passing build:
 ## 10. Device/IP and privacy limits
 
 - **Actor identity:** server-validated staff ID/username, role and session.
-- **Device:** browser-generated UUID stored locally; browser/user agent.
-  UUID can reset when local storage is cleared and can be impersonated.
+- **Device:** staff-defined local counter label (configure under **Sessions**),
+  browser-generated UUID stored locally, and browser/user agent. Counter
+  labels and UUIDs can be changed or reset, and are not hardware attestation.
 - **IP:** socket peer observed by ASGI. Behind Cloud Run, load balancers,
   Vite or reverse proxies, this may be an intermediary IP, not the staff
   terminal's public address. We intentionally do not trust arbitrary
