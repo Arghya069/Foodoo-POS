@@ -7,7 +7,7 @@ select{display:block;width:100%;padding:12px;border:1px solid #dbe4e2;border-rad
 
 .phone-suggestions{border:1px solid #dbe4e2;border-radius:8px;background:#fff;overflow:hidden;margin:-10px 0 14px;box-shadow:0 8px 24px #0001}.phone-suggestions button{display:flex;justify-content:space-between;gap:12px;align-items:center;width:100%;text-align:left;border-radius:0;background:#fff;color:#1f2933;border-bottom:1px solid #edf1f0;padding:12px}.phone-suggestions button:hover,.phone-suggestions button:focus{background:#dcefea}.phone-suggestions span{color:#52615c;font-weight:400}
 
-/* Foodoo sign-in */
+/* Foodooo sign-in */
 .login-shell{min-height:100vh;display:grid;place-items:center;padding:32px 18px;background:radial-gradient(circle at 15% 10%,#dcefea 0,transparent 35%),linear-gradient(145deg,#f7faf9,#e8f3f0)}
 .login-shell .login{margin:0;width:100%;max-width:440px;padding:40px;border:1px solid #dbe9e4;box-shadow:0 22px 70px #0e544824}
 .login-mark{color:#126b5b;font-size:28px;letter-spacing:-1px;font-weight:800;margin-bottom:28px}
@@ -41,7 +41,7 @@ select{display:block;width:100%;padding:12px;border:1px solid #dbe4e2;border-rad
 
 .staff-create{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 18px}.staff-create h2{grid-column:1/-1}.staff-create label input,.staff-create label select{margin-bottom:0}.staff-create button{justify-self:start;align-self:end}.staff-list{display:grid;gap:12px}.staff-row{display:flex;gap:15px;align-items:center}.staff-row>div{flex:1}.staff-row p{margin:4px 0;color:#64736f}.staff-row label{min-width:140px}.staff-row select{margin:0}@media(max-width:720px){.staff-create{grid-template-columns:1fr}.staff-row{flex-wrap:wrap}.staff-row>div{flex-basis:100%}}
 
-/* Foodoo workspace navigation: desktop rail + accessible mobile drawer */
+/* Foodooo workspace navigation: desktop rail + accessible mobile drawer */
 :root{--fd-green:#126b5b;--fd-ink:#19342e;--fd-muted:#647770;--fd-line:#e3ebe8;--fd-panel:#fff}
 .app-shell{display:flex;min-height:100vh;background:#f6f9f8}
 .app-sidebar{flex:0 0 250px;width:250px;position:sticky;top:0;align-self:flex-start;height:100vh;background:#fff;border-right:1px solid var(--fd-line);display:flex;flex-direction:column;z-index:80;box-shadow:2px 0 12px #132f2805}
@@ -135,7 +135,7 @@ select{display:block;width:100%;padding:12px;border:1px solid #dbe4e2;border-rad
 .audit-button{margin-top:6px;font-size:12px;padding:8px 12px}
 @media(max-width:640px){.history-actions{flex-direction:column;align-items:stretch}.history-actions button{width:100%}.audit-button{width:100%}}
 
-/* Foodoo dialogs: consistent with the POS design language */
+/* Foodooo dialogs: consistent with the POS design language */
 .foodoo-dialog{width:min(94vw,450px)!important;padding:25px 26px 22px!important;border:1px solid #e1ece7!important;border-radius:18px!important;box-shadow:0 24px 80px #10352b30!important;font-family:Inter,system-ui,sans-serif!important}
 .foodoo-dialog-title{font-size:23px!important;font-weight:750!important;letter-spacing:-.4px!important;color:#1f3830!important;padding:12px 0 0!important}
 .foodoo-dialog-body{font-size:14px!important;line-height:1.55!important;color:#5a7065!important;margin:14px 0!important}
