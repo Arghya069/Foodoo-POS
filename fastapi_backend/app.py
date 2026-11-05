@@ -27,7 +27,7 @@ from schemas import (Credentials, LoginResponse, MeResponse, RestaurantUpdate, R
     StaffResponse, ReceiptSendRequest, WhatsAppStatusResponse, WhatsAppSendResponse,
     SuccessResponse, OrderListRow, OrderHistoryResponse, SalesReportResponse,
     KitchenOrder, CustomerSuggestion, CustomerLookupResponse, SessionResponse, OrderAuditResponse,
-    WhatsAppInboxItem)
+    WhatsAppInboxItem,WhatsAppDeliveryItem)
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 PROJECT = os.getenv("FOODOO_FIRESTORE_PROJECT")
@@ -594,16 +594,37 @@ def perform_whatsapp_send(order_id,payload,request,user,resend=False):
         ref.update({"state":"review_required","updated_at":now(),"reason":"upstream_error"})
         raise HTTPException(502,"Meta did not confirm receipt submission; administrator review required before retrying")
     sent_at=now()
-    ref.update({"state":"submitted","updated_at":sent_at,"last_sent_at":sent_at,
+    batch=db.batch()
+    batch.update(ref,{"state":"submitted","updated_at":sent_at,"last_sent_at":sent_at,
                 "message_id":result["message_id"],"recipient":result["recipient"],"reason":None})
+    batch.set(db.collection("whatsapp_message_links").document(event_id(result["message_id"])),{
+        "order_id":order_id,"restaurant_id":user["restaurant_id"],
+        "recipient":result["recipient"],"sent_at":sent_at})
+    batch.commit()
     return {"status":"submitted","message_id":result["message_id"]}
+
+@app.get("/api/whatsapp/statuses/",response_model=list[WhatsAppDeliveryItem])
+def whatsapp_delivery_statuses(user=Depends(roles("admin"))):
+    """Recent outbound Meta status events; read-only admin visibility."""
+    docs=db.collection("whatsapp_status").order_by(
+        "event_at",direction=firestore.Query.DESCENDING).limit(50).stream()
+    return [{"id":doc.id,**doc.to_dict()} for doc in docs]
+
 
 @app.get("/api/whatsapp/inbox/",response_model=list[WhatsAppInboxItem])
 def whatsapp_inbox(user=Depends(roles("admin"))):
     """Authenticated admin read-only inbound messages; no automatic replies."""
     docs=db.collection("whatsapp_inbox").order_by(
         "received_at",direction=firestore.Query.DESCENDING).limit(50).stream()
-    return [{"id":doc.id,**doc.to_dict()} for doc in docs]
+    items=[]
+    for doc in docs:
+        item={"id":doc.id,**doc.to_dict()}
+        if not item.get("order_id") and item.get("context_message_id"):
+            link=db.collection("whatsapp_message_links").document(event_id(item["context_message_id"])).get()
+            if link.exists:
+                item["order_id"]=link.to_dict().get("order_id")
+        items.append(item)
+    return items
 
 
 @app.get("/api/customers/lookup/",response_model=CustomerLookupResponse)
