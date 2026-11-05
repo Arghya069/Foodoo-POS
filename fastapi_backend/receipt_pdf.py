@@ -85,7 +85,7 @@ def build_receipt_pdf(restaurant, order):
         pdf.line(LEFT, y + 1 * mm, RIGHT, y + 1 * mm)
         y -= 2 * mm
 
-    centered(restaurant.get("name", "Foodoo"), 10.5, True, 5)
+    centered(restaurant.get("name", "Foodooo"), 10.5, True, 5)
     for line in address:
         centered(line, 7, False, 3.5)
     if restaurant.get("contact_phone"):
@@ -140,7 +140,7 @@ def build_receipt_pdf(restaurant, order):
     rule()
     pair("TOTAL", order["total_paise"], True)
     centered("PAID - " + str(order.get("payment_method", "")).upper(), 7, False, 5)
-    centered("Powered by foodoo", 7, True, 4)
+    centered("Powered by foodooo", 7, True, 4)
     # GSTIN and FSSAI are optional: include each only when actually configured.
     # FSSAI sits immediately above the thank-you line as requested.
     license_number = str(restaurant.get("fssai_license_number") or "").strip()
