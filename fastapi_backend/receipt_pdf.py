@@ -56,7 +56,7 @@ def build_receipt_pdf(restaurant, order):
                 3 * 4.7 + 2 + 4.7 + 5 + 4 + 5 + 6)
     optional_mm = (len(address) * 3.5 +
                    (4 if restaurant.get("contact_phone") else 0) +
-                   (4 if restaurant.get("gstin") else 0) +
+                   (4 if str(restaurant.get("gstin") or "").strip() else 0) +
                    (4 if (order.get("paid_at") or order.get("created_at")) else 0) +
                    len(customer_lines) * 3.6)
     item_mm = sum(max(1, len(lines)) * 4.2 + 1.5 for _, lines in rows)
@@ -90,8 +90,9 @@ def build_receipt_pdf(restaurant, order):
         centered(line, 7, False, 3.5)
     if restaurant.get("contact_phone"):
         centered("Tel: " + str(restaurant["contact_phone"]), 7, False, 4)
-    if restaurant.get("gstin"):
-        centered("GSTIN: " + str(restaurant["gstin"]), 7, False, 4)
+    gstin = str(restaurant.get("gstin") or "").strip()
+    if gstin:
+        centered("GSTIN: " + gstin, 7, False, 4)
 
     centered("TAX INVOICE / RECEIPT", 8.5, True, 5)
     centered("TOKEN #" + str(order.get("token_number", "-")), 12, True, 5)
