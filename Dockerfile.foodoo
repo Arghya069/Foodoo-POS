@@ -17,7 +17,8 @@ COPY fastapi_backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY fastapi_backend/app.py fastapi_backend/schemas.py fastapi_backend/sessions.py \
      fastapi_backend/whatsapp_send.py fastapi_backend/receipt_pdf.py \
-     fastapi_backend/server.py fastapi_backend/bootstrap.py ./
+     fastapi_backend/server.py fastapi_backend/bootstrap.py \
+     fastapi_backend/order_audit.py ./
 COPY --from=frontend /ui/dist /app/dist
 RUN python -m compileall -q . && chown -R foodoo:foodoo /app
 USER foodoo
