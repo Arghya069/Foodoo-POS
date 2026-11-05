@@ -414,6 +414,10 @@ It remains a development server, not a security-approved production endpoint.
   rate limiting as well; Cloud Run may report a shared proxy peer address.
 - API responses disable caching and include anti-framing, MIME sniffing and
   conservative browser permissions headers. Enforce HTTPS in Cloud Run.
+- Checkout now sends a browser-generated UUIDv4 idempotency key. A repeated
+  create-order request by the same cashier reuses its existing draft and
+  token instead of creating a second bill; an already-paid replay is rejected.
+  The create-order button also disables while waiting for its response.
 - The UI no longer reuses WhatsApp consent saved for an earlier order;
   staff must confirm consent for every new order.
 - Menu-upload field sizes and tax-rate inputs are validated, and extremely
