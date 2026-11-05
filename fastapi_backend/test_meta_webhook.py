@@ -18,6 +18,7 @@ def signed_client(monkeypatch):
     monkeypatch.setenv("FIRESTORE_EMULATOR_HOST","127.0.0.1:8089")
     monkeypatch.setenv("WHATSAPP_VERIFY_TOKEN","unit-test-verification-secret")
     monkeypatch.setenv("WHATSAPP_APP_SECRET","unit-test-meta-app-secret")
+    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID","12345")
     from app import app
     return TestClient(app)
 
