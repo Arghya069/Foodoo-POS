@@ -31,6 +31,8 @@ from schemas import (Credentials, LoginResponse, MeResponse, RestaurantUpdate, R
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 PROJECT = os.getenv("FOODOO_FIRESTORE_PROJECT")
+if not PROJECT:
+    raise RuntimeError("FOODOO_FIRESTORE_PROJECT must be explicitly configured for tenant isolation")
 DATABASE = os.getenv("FOODOO_FIRESTORE_DATABASE", "(default)")
 SECRET = os.getenv("FOODOO_SESSION_SECRET", "")
 if len(SECRET) < 32 or SECRET == "replace-with-a-long-random-secret":
