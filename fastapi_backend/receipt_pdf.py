@@ -49,7 +49,19 @@ def build_receipt_pdf(restaurant, order):
         rows.append((item, name_lines))
 
     address = _wrapped(restaurant.get("address", ""), 48 * mm, font_size=7)
-    height_mm = max(118, 92 + len(address) * 4 + sum(max(1, len(lines)) * 4.4 + 2.2 for _, lines in rows))
+    # Reserve generous space for ALL headers, multi-line item names, taxes and
+    # the mandatory footer. A fixed minimum alone can clip longer receipts.
+    customer_lines = _wrapped("Customer: " + order.get("customer_name", ""), 49 * mm, font_size=7) if order.get("customer_name") else []
+    fixed_mm = (6 + 5 + 4 + 5 + 5 + 4 + 2 + 4.5 + 2 + 2 +
+                3 * 4.7 + 2 + 4.7 + 5 + 4 + 5 + 6)
+    optional_mm = (len(address) * 3.5 +
+                   (4 if restaurant.get("contact_phone") else 0) +
+                   (4 if restaurant.get("gstin") else 0) +
+                   (4 if (order.get("paid_at") or order.get("created_at")) else 0) +
+                   len(customer_lines) * 3.6)
+    item_mm = sum(max(1, len(lines)) * 4.2 + 1.5 for _, lines in rows)
+    # 8 mm safety buffer to protect the last line on narrow thermal printers.
+    height_mm = max(118, fixed_mm + optional_mm + item_mm + 8)
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=(WIDTH, height_mm * mm), pageCompression=1)
     y = height_mm * mm - 6 * mm
@@ -128,8 +140,13 @@ def build_receipt_pdf(restaurant, order):
     pair("TOTAL", order["total_paise"], True)
     centered("PAID - " + str(order.get("payment_method", "")).upper(), 7, False, 5)
     centered("Powered by foodoo", 7, True, 4)
-    if restaurant.get("fssai_license_number"):
-        centered("FSSAI Lic. No.: " + str(restaurant["fssai_license_number"]), 6.8, False, 4)
+    # Keep this row visible even when the restaurant has not yet configured
+    # its FSSAI number. Never silently omit legally relevant settings.
+    license_number = str(restaurant.get("fssai_license_number") or "").strip()
+    if license_number:
+        centered("FSSAI Lic. No.: " + license_number, 6.8, True, 4.6)
+    else:
+        centered("FSSAI license: Not configured", 6.6, False, 4.6)
     centered("Thank you!", 8, False, 5)
 
     pdf.showPage()
