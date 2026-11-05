@@ -20,6 +20,8 @@ from sessions import new_session,validate_session,revoke_session,revoke_user_ses
 from order_audit import actor_details
 from whatsapp_policy import authorize_receipt_send,SendDenied
 from meta_webhook import create_webhook_receiver,event_id
+from login_guard import check_login_attempt,record_login_failure,clear_login_failures
+from order_audit import peer_address
 from pwdlib import PasswordHash
 from schemas import (Credentials, LoginResponse, MeResponse, RestaurantUpdate, RestaurantResponse,
     MenuInput, MenuPatch, MenuResponse, LineInput, OrderInput, OrderCreatedResponse,
@@ -128,16 +130,20 @@ def csrf(response: Response):
     return {"ok":True}
 
 @app.post("/api/auth/login/",response_model=LoginResponse)
-def login(payload: Credentials, response: Response):
-    # Username is globally unique; resolve membership server-side.
-    results = list(db.collection("identities").where("username", "==", payload.username).limit(1).stream())
-    if not results or not results[0].to_dict().get("active", True):
-        raise HTTPException(401, "Invalid username or password")
-    user = results[0].to_dict()
-    if not password_hash.verify(payload.password, user["password_hash"]):
-        raise HTTPException(401, "Invalid username or password")
-    response.set_cookie("foodoo_session", new_session(db, results[0].id, user["restaurant_id"]),
-                        max_age=8*60*60, secure=COOKIE_SECURE, httponly=True, samesite="lax", path="/")
+def login(payload: Credentials, response: Response, request: Request):
+    # Never leak which usernames exist; apply the same failure budget.
+    peer=peer_address(request)
+    check_login_attempt(db,payload.username,peer)
+    results=list(db.collection("identities").where(
+        "username","==",payload.username).limit(1).stream())
+    user=results[0].to_dict() if results else None
+    if not user or not user.get("active",True) or not password_hash.verify(
+            payload.password,user["password_hash"]):
+        record_login_failure(db,payload.username,peer)
+        raise HTTPException(401,"Invalid username or password")
+    response.set_cookie("foodoo_session",new_session(db,results[0].id,user["restaurant_id"]),
+                        max_age=8*60*60,secure=COOKIE_SECURE,httponly=True,samesite="lax",path="/")
+    clear_login_failures(db,payload.username,peer)
     return {"username":payload.username}
 
 @app.post("/api/auth/logout/")
