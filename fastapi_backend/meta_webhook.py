@@ -105,7 +105,7 @@ def persist_meta_events(db,payload,expected_phone_id=None):
     for entry in entries:
         if not isinstance(entry,dict):
             continue
-        for change in entry.get("changes",[]):
+        for change in (entry.get("changes") or []):
             if not isinstance(change,dict):
                 continue
             value=change.get("value")
@@ -116,7 +116,7 @@ def persist_meta_events(db,payload,expected_phone_id=None):
                 logger.warning("Ignoring event from different WhatsApp phone number ID")
                 continue
             field=str(change.get("field") or "unknown")[:60]
-            for message in value.get("messages",[]):
+            for message in (value.get("messages") or []):
                 if not isinstance(message,dict) or not message.get("id"):
                     continue
                 mid=str(message["id"])
@@ -135,7 +135,7 @@ def persist_meta_events(db,payload,expected_phone_id=None):
                     result["incoming"]+=1
                 except AlreadyExists:
                     pass
-            for status in value.get("statuses",[]):
+            for status in (value.get("statuses") or []):
                 if isinstance(status,dict) and merge_status(db,status):
                     result["statuses"]+=1
             # Track feedback/quality/account changes without storing raw PII.
