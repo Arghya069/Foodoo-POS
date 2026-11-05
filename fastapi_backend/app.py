@@ -257,10 +257,12 @@ def create_order(payload: OrderInput,request:Request,user=Depends(roles("admin",
         number=(snap.to_dict().get("last_number",0) if snap.exists else 0)+1
         tx.set(counter,{"last_number":number,"currently_serving":snap.to_dict().get("currently_serving",0) if snap.exists else 0})
         tx.create(order,{"created_at":now(),"status":"draft","token_number":number,"token_date":day,
-           "created_by":user["id"],"created_by_username":user.get("username",""),"creation_audit":actor_details(request,user),"customer_name":payload.customer_name,"customer_phone":payload.customer_phone,
+           "created_by":user["id"],"created_by_username":user.get("username",""),"customer_name":payload.customer_name,"customer_phone":payload.customer_phone,
            "whatsapp_consent":payload.whatsapp_consent,"lines":lines,
            "subtotal_paise":subtotal,"cgst_paise":cgst,"sgst_paise":sgst,"total_paise":subtotal+cgst+sgst,
            "cgst_rate":config.get("cgst_rate","2.50"),"sgst_rate":config.get("sgst_rate","2.50")})
+        tx.create(root.collection("order_audit").document(order.id),{"created_at":now(),
+           "creation":actor_details(request,user),"expires_at":now()+timedelta(days=30)})
         return number
     number=persist(transaction)
     return {"id":order.id,"status":"draft","token_number":number,"token_date":day,
@@ -279,9 +281,10 @@ def pay(order_id: str,payload: Payment,request:Request,user=Depends(roles("admin
         data=snap.to_dict()
         if data["status"]=="paid":return data
         updated={"status":"paid","payment_method":payload.payment_method,"paid_at":now(),
-                 "receipt_number":"FD-"+now().strftime("%Y%m%d")+"-"+order_id[:12].upper(),
-                 "payment_audit":actor_details(request,user)}
+                 "receipt_number":"FD-"+now().strftime("%Y%m%d")+"-"+order_id[:12].upper()}
         transaction.update(order,updated)
+        transaction.set(restaurant_root(user["restaurant_id"]).collection("order_audit").document(order_id),
+                        {"payment":actor_details(request,user),"expires_at":now()+timedelta(days=30)},merge=True)
         return {**data,**updated}
     data=commit(tx)
     return {"id":order_id,"status":data["status"],"receipt_number":data["receipt_number"],
@@ -339,10 +342,14 @@ def order_audit(order_id:str,user=Depends(roles("admin"))):
     if not doc.exists:
         raise HTTPException(404,"Order not found")
     data=doc.to_dict()
+    audit_doc=restaurant_root(user["restaurant_id"]).collection("order_audit").document(order_id).get()
+    audit=audit_doc.to_dict() if audit_doc.exists else {}
+    if audit.get("expires_at") and audit["expires_at"]<=now():
+        audit={}
     return {"order_id":doc.id,"created_at":data["created_at"],
             "created_by":data.get("created_by_username") or data.get("created_by") or "Unknown",
-            "creation":data.get("creation_audit"),
-            "payment":data.get("payment_audit")}
+            "creation":audit.get("creation"),
+            "payment":audit.get("payment")}
 
 @app.get("/api/orders/history/",response_model=OrderHistoryResponse)
 def history(start:str|None=None,end:str|None=None,status:str="all",q:str="",page:int=1,
