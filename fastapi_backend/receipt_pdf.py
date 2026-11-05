@@ -140,13 +140,11 @@ def build_receipt_pdf(restaurant, order):
     pair("TOTAL", order["total_paise"], True)
     centered("PAID - " + str(order.get("payment_method", "")).upper(), 7, False, 5)
     centered("Powered by foodoo", 7, True, 4)
-    # Keep this row visible even when the restaurant has not yet configured
-    # its FSSAI number. Never silently omit legally relevant settings.
+    # GSTIN and FSSAI are optional: include each only when actually configured.
+    # FSSAI sits immediately above the thank-you line as requested.
     license_number = str(restaurant.get("fssai_license_number") or "").strip()
     if license_number:
         centered("FSSAI Lic. No.: " + license_number, 6.8, True, 4.6)
-    else:
-        centered("FSSAI license: Not configured", 6.6, False, 4.6)
     centered("Thank you!", 8, False, 5)
 
     pdf.showPage()
