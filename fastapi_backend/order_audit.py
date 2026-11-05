@@ -29,7 +29,8 @@ def device_details(request):
     agent=request.headers.get("user-agent","")[:MAX_AGENT]
     # Strip terminal escapes/control chars for safe storage and inspection.
     agent=re.sub(r"[\x00-\x1f\x7f]","",agent)
-    return {"browser_device_id":device,"observed_ip":peer_address(request),
+    label=re.sub(r"[^a-zA-Z0-9 _.-]","",request.headers.get("x-foodoo-device-label","")[:60]).strip()
+    return {"browser_device_id":device,"device_label":label or None,"observed_ip":peer_address(request),
             "user_agent":agent or None}
 
 
