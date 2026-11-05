@@ -16,6 +16,10 @@ class Credentials(StrictRequest):
     username: str = Field(min_length=1, max_length=150)
     password: str = Field(min_length=1)
 
+class ChangePasswordRequest(StrictRequest):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=12, max_length=256)
+
 class LoginResponse(BaseModel):
     username: str
 
