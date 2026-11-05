@@ -154,3 +154,31 @@ def test_fastapi_openapi_documents_request_and_response_models(monkeypatch):
     assert update["requestBody"]["content"]["application/json"]["schema"]["$ref"].endswith("RestaurantUpdate")
     assert update["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith("RestaurantResponse")
     assert routes["/api/orders/"]["post"]["responses"]["201"]["content"]["application/json"]["schema"]["$ref"].endswith("OrderCreatedResponse")
+
+
+@pytest.mark.parametrize("rate",["-1","101","2.555","NaN","Infinity","abc"])
+def test_untrusted_tax_rates_are_rejected(rate):
+    with pytest.raises(ValidationError):
+        RestaurantUpdate(cgst_rate=rate)
+
+
+def test_file_upload_and_order_payload_limits():
+    with pytest.raises(ValidationError):
+        MenuInput(name="Dish",price="10",image_data="a"*210001)
+    with pytest.raises(ValidationError):
+        OrderInput(items=[{"id":"dish","quantity":1}]*2001)
+
+
+def test_prod_security_headers_and_api_cache_policy(monkeypatch):
+    monkeypatch.setenv("FOODOO_SESSION_SECRET", "test-secret-longer-than-thirty-two-characters")
+    monkeypatch.setenv("FOODOO_FIRESTORE_PROJECT", "foodoo-test")
+    monkeypatch.setenv("FIRESTORE_EMULATOR_HOST", "127.0.0.1:8089")
+    from fastapi.testclient import TestClient
+    from app import app as fastapi_app
+
+    response=TestClient(fastapi_app).get("/healthz")
+    assert response.status_code==200
+    assert response.headers["x-content-type-options"]=="nosniff"
+    assert response.headers["x-frame-options"]=="DENY"
+    protected=TestClient(fastapi_app).get("/api/auth/csrf/")
+    assert protected.headers["cache-control"]=="no-store"
