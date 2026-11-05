@@ -49,19 +49,30 @@ def build_receipt_pdf(restaurant, order):
         rows.append((item, name_lines))
 
     address = _wrapped(restaurant.get("address", ""), 48 * mm, font_size=7)
-    # Reserve generous space for ALL headers, multi-line item names, taxes and
-    # the mandatory footer. A fixed minimum alone can clip longer receipts.
-    customer_lines = _wrapped("Customer: " + order.get("customer_name", ""), 49 * mm, font_size=7) if order.get("customer_name") else []
-    fixed_mm = (6 + 5 + 4 + 5 + 5 + 4 + 2 + 4.5 + 2 + 2 +
-                3 * 4.7 + 2 + 4.7 + 5 + 4 + 5 + 6)
-    optional_mm = (len(address) * 3.5 +
-                   (4 if restaurant.get("contact_phone") else 0) +
-                   (4 if str(restaurant.get("gstin") or "").strip() else 0) +
-                   (4 if (order.get("paid_at") or order.get("created_at")) else 0) +
-                   len(customer_lines) * 3.6)
-    item_mm = sum(max(1, len(lines)) * 4.2 + 1.5 for _, lines in rows)
-    # 8 mm safety buffer to protect the last line on narrow thermal printers.
-    height_mm = max(118, fixed_mm + optional_mm + item_mm + 8)
+    # Calculate height from the exact vertical steps used below. Thermal paper
+    # has a fixed width, but the length expands to fit every line and footer.
+    customer_lines = (_wrapped("Customer: " + order["customer_name"], 49 * mm, font_size=7)
+                      if order.get("customer_name") else [])
+    has_phone = bool(str(restaurant.get("contact_phone") or "").strip())
+    has_gstin = bool(str(restaurant.get("gstin") or "").strip())
+    has_fssai = bool(str(restaurant.get("fssai_license_number") or "").strip())
+    has_timestamp = bool(order.get("paid_at") or order.get("created_at"))
+    row_height_mm = sum(max(1, len(lines)) * 4.2 + 1.5 for _, lines in rows)
+    vertical_steps_mm = (
+        5 + len(address) * 3.5 + (4 if has_phone else 0) +
+        (4 if has_gstin else 0) +
+        5 + 5 + 4 + (4 if has_timestamp else 0) +
+        len(customer_lines) * 3.6 + 2 + 4.5 + 2 +
+        row_height_mm + 2 + 3 * 4.7 + 2 + 4.7 + 5 + 4 +
+        (4.6 if has_fssai else 0) + 5
+    )
+    # 6 mm at top and 8 mm after the last line, plus the final line's step.
+    height_mm = 6 + vertical_steps_mm + 8
+    # PDF readers and print drivers commonly enforce a 200-inch maximum page
+    # dimension. Reject unrealistic single-page receipts rather than silently
+    # printing truncated content. Real POS orders should fit comfortably.
+    if height_mm * mm > 14000:
+        raise ValueError("Receipt exceeds PDF single-page height; split the order")
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=(WIDTH, height_mm * mm), pageCompression=1)
     y = height_mm * mm - 6 * mm
