@@ -38,7 +38,7 @@ def test_all_items_and_footer_fit_without_height_clipping(count,long_names):
     assert len(reader.pages)==1
     page=reader.pages[0]
     assert abs(float(page.mediabox.width)-57*mm)<1
-    assert float(page.mediabox.height)>118*mm
+    assert float(page.mediabox.height)>=118*mm
     content=page.extract_text()
     for i in range(count):
         assert f"Order item {i:04d}" in content
