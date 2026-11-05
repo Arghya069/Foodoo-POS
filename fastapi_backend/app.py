@@ -516,7 +516,16 @@ def whatsapp_receipt_status(order_id:str,user=Depends(roles("admin","cashier","s
     return {"status":data.get("state","unknown"),"message_id":data.get("message_id")}
 
 @app.post("/api/orders/{order_id}/whatsapp/",response_model=WhatsAppSendResponse)
-def send_receipt_whatsapp(order_id:str,payload:ReceiptSendRequest,user=Depends(roles("admin","cashier","staff"))):
+def send_receipt_whatsapp(order_id:str,payload:ReceiptSendRequest,
+                          request:Request,user=Depends(roles("admin","cashier","staff"))):
+    return perform_whatsapp_send(order_id,payload,request,user,resend=False)
+
+@app.post("/api/orders/{order_id}/whatsapp/resend/",response_model=WhatsAppSendResponse)
+def resend_receipt_whatsapp(order_id:str,payload:ReceiptSendRequest,
+                            request:Request,user=Depends(roles("admin","cashier","staff"))):
+    return perform_whatsapp_send(order_id,payload,request,user,resend=True)
+
+def perform_whatsapp_send(order_id,payload,request,user,resend=False):
     from receipt_pdf import build_receipt_pdf
     from whatsapp_send import send_receipt_pdf,WhatsAppConfigError,WhatsAppSendError,normalize_phone
     if not payload.confirm:
@@ -529,28 +538,37 @@ def send_receipt_whatsapp(order_id:str,payload:ReceiptSendRequest,user=Depends(r
         normalize_phone(phone)
     except ValueError:
         raise HTTPException(422,"Customer phone number is invalid")
-    # Avoid inadvertent repeated sends. This is a best-effort delivery record,
-    # not an exactly-once guarantee across upstream network failures.
     ref=restaurant_root(user["restaurant_id"]).collection("whatsapp_receipts").document(order_id)
     tx=db.transaction()
     @firestore.transactional
     def claim(transaction):
         snap=ref.get(transaction=transaction)
-        if snap.exists and snap.to_dict().get("state") in ("sending","submitted","review_required"):
-            return False
-        transaction.set(ref,{"state":"sending","claimed_at":now(),"created_by":user["id"]},merge=True)
-        return True
-    if not claim(tx):
-        raise HTTPException(409,"This receipt is already sending or was submitted")
+        data=snap.to_dict() if snap.exists else {}
+        state=data.get("state","not_sent")
+        if state in ("sending","review_required"):
+            raise HTTPException(409,"Receipt send is pending or needs administrator review")
+        if resend:
+            if state!="submitted":
+                raise HTTPException(409,"Receipt must be sent successfully before it can be resent")
+            last=data.get("last_sent_at")
+            if last and (now()-last).total_seconds()<120:
+                raise HTTPException(429,"Wait at least two minutes between receipt sends")
+        elif state=="submitted":
+            raise HTTPException(409,"Receipt already submitted; use Resend in Order History")
+        count=int(data.get("attempt_count",0))
+        if count>=3:
+            raise HTTPException(429,"Maximum three WhatsApp send attempts reached for this order")
+        transaction.set(ref,{"state":"sending","claimed_at":now(),
+                             "created_by":user["id"],"attempt_count":count+1,
+                             "last_attempt_by":actor_details(request,user)},merge=True)
+    claim(tx)
     try:
         fields=[x.strip() for x in os.getenv("WHATSAPP_TEMPLATE_BODY_FIELDS","").split(",") if x.strip()]
-        values={
-            "customer_name":order.get("customer_name") or "Customer",
-            "receipt_number":order.get("receipt_number") or order_id,
-            "total":money(order["total_paise"]),
-            "token_number":str(order.get("token_number","")),
-            "restaurant_name":restaurant.get("name","Foodoo"),
-        }
+        values={"customer_name":order.get("customer_name") or "Customer",
+                "receipt_number":order.get("receipt_number") or order_id,
+                "total":money(order["total_paise"]),
+                "token_number":str(order.get("token_number","")),
+                "restaurant_name":restaurant.get("name","Foodoo")}
         if any(field not in values for field in fields):
             raise WhatsAppConfigError("Unsupported template body field")
         filename="foodoo-"+str(order.get("receipt_number") or order_id)+".pdf"
@@ -558,12 +576,13 @@ def send_receipt_whatsapp(order_id:str,payload:ReceiptSendRequest,user=Depends(r
                                 body_parameters=[values[field] for field in fields])
     except WhatsAppConfigError:
         ref.update({"state":"failed","updated_at":now(),"reason":"configuration"})
-        raise HTTPException(503,"WhatsApp is not configured: set Meta token, phone number ID, template name and language")
+        raise HTTPException(503,"WhatsApp configuration is incomplete or invalid")
     except WhatsAppSendError:
         ref.update({"state":"review_required","updated_at":now(),"reason":"upstream_error"})
-        raise HTTPException(502,"Meta did not confirm delivery acceptance. Check status before attempting again")
-    ref.update({"state":"submitted","updated_at":now(),"message_id":result["message_id"],
-                "recipient":result["recipient"],"reason":None})
+        raise HTTPException(502,"Meta did not confirm receipt submission; administrator review required before retrying")
+    sent_at=now()
+    ref.update({"state":"submitted","updated_at":sent_at,"last_sent_at":sent_at,
+                "message_id":result["message_id"],"recipient":result["recipient"],"reason":None})
     return {"status":"submitted","message_id":result["message_id"]}
 
 @app.get("/api/customers/lookup/",response_model=CustomerLookupResponse)
