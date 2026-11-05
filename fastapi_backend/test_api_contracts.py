@@ -41,6 +41,26 @@ def test_receipt_57mm_columns_fssai_and_totals(receipt_data):
         assert part in text
 
 
+def test_fssai_missing_is_explicit_in_receipt(receipt_data):
+    restaurant,order=receipt_data
+    restaurant={**restaurant,"fssai_license_number":""}
+    page=PdfReader(BytesIO(build_receipt_pdf(restaurant,order))).pages[0]
+    assert "FSSAI license: Not configured" in page.extract_text()
+    assert "Thank you!" in page.extract_text()
+
+
+def test_long_receipt_still_has_fssai_before_thank_you(receipt_data):
+    restaurant,order=receipt_data
+    order={**order,"lines":[{
+        "name":"Very Long Tandoori Special Chicken Biryani Serving Family Portion",
+        "quantity":2,"unit_price_paise":20000,"line_total_paise":40000,
+    } for _ in range(15)]}
+    page=PdfReader(BytesIO(build_receipt_pdf(restaurant,order))).pages[0]
+    words=page.extract_text()
+    assert words.index("FSSAI Lic. No.: 12345678901234") < words.index("Thank you!")
+    assert float(page.mediabox.height)>118*mm
+
+
 def test_meta_document_template_shape():
     payload = build_template("918249672385", "media-123", "receipt.pdf",
                              {"template_name": "foodoo_receipt", "language": "en_US"},
