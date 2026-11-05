@@ -153,8 +153,8 @@ async function viewOrderAudit(item){
     "Browser ID: "+(actor.device?.browser_device_id||"Not supplied"),
     "Observed IP: "+(actor.device?.observed_ip||"Unavailable"),
     "Browser: "+(actor.device?.user_agent||"Unknown")
-  ].join("\\n"):"Not recorded (older order)";
-  window.alert("ORDER AUDIT\\nCreated by: "+data.created_by+"\\nCreated:\\n"+describe(creation)+"\\n\\nPayment:\\n"+describe(payment));
+  ].join("\n"):"Not recorded (older order)";
+  window.alert("ORDER AUDIT\nCreated by: "+data.created_by+"\nCreated:\n"+describe(creation)+"\n\nPayment:\n"+describe(payment));
  }catch(e){G(e.message)}
 }
 async function downloadHistoryReceipt(item){try{const r=await fetch(API+"/orders/"+item.id+"/receipt/",{credentials:"same-origin"});if(!r.ok)throw Error("Receipt unavailable");const blob=await r.blob();const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=(item.receipt_number||"foodoo-receipt")+".pdf";a.click();setTimeout(()=>URL.revokeObjectURL(url),60000)}catch(e){G(e.message)}}
