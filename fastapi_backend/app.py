@@ -19,13 +19,15 @@ from google.cloud import firestore
 from sessions import new_session,validate_session,revoke_session,revoke_user_sessions,user_sessions
 from order_audit import actor_details
 from whatsapp_policy import authorize_receipt_send,SendDenied
+from meta_webhook import create_webhook_receiver,event_id
 from pwdlib import PasswordHash
 from schemas import (Credentials, LoginResponse, MeResponse, RestaurantUpdate, RestaurantResponse,
     MenuInput, MenuPatch, MenuResponse, LineInput, OrderInput, OrderCreatedResponse,
     Payment, PaidResponse, ServingUpdate, TokenResponse, StaffCreate, StaffPatch,
     StaffResponse, ReceiptSendRequest, WhatsAppStatusResponse, WhatsAppSendResponse,
     SuccessResponse, OrderListRow, OrderHistoryResponse, SalesReportResponse,
-    KitchenOrder, CustomerSuggestion, CustomerLookupResponse, SessionResponse, OrderAuditResponse)
+    KitchenOrder, CustomerSuggestion, CustomerLookupResponse, SessionResponse, OrderAuditResponse,
+    WhatsAppInboxItem)
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 PROJECT = os.getenv("FOODOO_FIRESTORE_PROJECT")
@@ -37,6 +39,7 @@ db = firestore.Client(project=PROJECT, database=DATABASE)
 password_hash = PasswordHash.recommended()
 COOKIE_SECURE = os.getenv("FOODOO_COOKIE_SECURE", "true").lower() == "true"
 app = FastAPI(title="Foodoo FastAPI + Firestore", version="0.1.0")
+app.include_router(create_webhook_receiver(db))
 
 def now():
     return datetime.now(timezone.utc)
@@ -98,6 +101,9 @@ def valid_csrf_token(value):
 
 @app.middleware("http")
 async def protect_mutations(request: Request, call_next):
+    # Meta signs webhook requests with the App Secret, not the browser CSRF token.
+    if request.url.path=="/webhooks/meta":
+        return await call_next(request)
     if request.method in ("POST", "PATCH", "PUT", "DELETE"):
         cookie=request.cookies.get("foodoo_csrf")
         header=request.headers.get("x-csrftoken")
@@ -521,7 +527,16 @@ def whatsapp_receipt_status(order_id:str,user=Depends(roles("admin","cashier","s
     if not record.exists:
         return {"status":"not_sent"}
     data=record.to_dict()
-    return {"status":data.get("state","unknown"),"message_id":data.get("message_id")}
+    response={"status":data.get("state","unknown"),"message_id":data.get("message_id")}
+    mid=data.get("message_id")
+    if mid:
+        status_doc=db.collection("whatsapp_status").document(event_id(mid)).get()
+        if status_doc.exists:
+            report=status_doc.to_dict()
+            response["delivery_status"]=report.get("status")
+            response["delivery_timestamp"]=report.get("event_at")
+            response["error_codes"]=report.get("error_codes",[])
+    return response
 
 @app.post("/api/orders/{order_id}/whatsapp/",response_model=WhatsAppSendResponse)
 def send_receipt_whatsapp(order_id:str,payload:ReceiptSendRequest,
@@ -582,6 +597,14 @@ def perform_whatsapp_send(order_id,payload,request,user,resend=False):
     ref.update({"state":"submitted","updated_at":sent_at,"last_sent_at":sent_at,
                 "message_id":result["message_id"],"recipient":result["recipient"],"reason":None})
     return {"status":"submitted","message_id":result["message_id"]}
+
+@app.get("/api/whatsapp/inbox/",response_model=list[WhatsAppInboxItem])
+def whatsapp_inbox(user=Depends(roles("admin"))):
+    """Authenticated admin read-only inbound messages; no automatic replies."""
+    docs=db.collection("whatsapp_inbox").order_by(
+        "received_at",direction=firestore.Query.DESCENDING).limit(50).stream()
+    return [{"id":doc.id,**doc.to_dict()} for doc in docs]
+
 
 @app.get("/api/customers/lookup/",response_model=CustomerLookupResponse)
 def lookup_customer(phone:str="",user=Depends(roles("admin","cashier","staff"))):
