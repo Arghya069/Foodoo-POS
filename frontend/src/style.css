@@ -134,3 +134,20 @@ select{display:block;width:100%;padding:12px;border:1px solid #dbe4e2;border-rad
 .history-creator{display:flex!important;justify-content:flex-start!important;gap:7px!important;color:#62736d;font-size:12px}
 .audit-button{margin-top:6px;font-size:12px;padding:8px 12px}
 @media(max-width:640px){.history-actions{flex-direction:column;align-items:stretch}.history-actions button{width:100%}.audit-button{width:100%}}
+
+/* Foodoo dialogs: consistent with the POS design language */
+.foodoo-dialog{width:min(94vw,450px)!important;padding:25px 26px 22px!important;border:1px solid #e1ece7!important;border-radius:18px!important;box-shadow:0 24px 80px #10352b30!important;font-family:Inter,system-ui,sans-serif!important}
+.foodoo-dialog-title{font-size:23px!important;font-weight:750!important;letter-spacing:-.4px!important;color:#1f3830!important;padding:12px 0 0!important}
+.foodoo-dialog-body{font-size:14px!important;line-height:1.55!important;color:#5a7065!important;margin:14px 0!important}
+.foodoo-dialog-actions{display:flex!important;gap:10px!important;margin:18px 0 0!important;align-items:stretch!important}
+.foodoo-dialog-confirm,.foodoo-dialog-cancel{min-height:43px!important;padding:10px 19px!important;border-radius:10px!important;border:1px solid transparent!important;font-weight:750!important;font-family:inherit!important;cursor:pointer!important}
+.foodoo-dialog-confirm{background:#126b5b!important;color:#fff!important}
+.foodoo-dialog-confirm:hover{background:#0d574a!important}
+.foodoo-dialog-danger{background:#aa453f!important}
+.foodoo-dialog-danger:hover{background:#8f342e!important}
+.foodoo-dialog-cancel{background:#f1f5f3!important;color:#435f53!important;border-color:#e0e8e3!important}
+.foodoo-dialog-confirm:focus-visible,.foodoo-dialog-cancel:focus-visible,.foodoo-dialog-input:focus-visible{outline:3px solid #83ccb0!important;outline-offset:2px!important}
+.foodoo-dialog-input{margin:12px auto 2px!important;max-width:100%!important;width:calc(100% - 4px)!important;border:1px solid #c9dcd3!important;border-radius:10px!important;font-size:15px!important;padding:12px!important}
+.foodoo-audit-details{white-space:pre-wrap!important;text-align:left!important;overflow-wrap:anywhere!important;background:#f4f9f6!important;border:1px solid #e5efea!important;border-radius:12px!important;padding:14px!important;font-size:13px!important;color:#32483f!important}
+.foodoo-toast{border-radius:12px!important;border:1px solid #dbe8e2!important;box-shadow:0 16px 48px #102e2523!important;font-family:Inter,system-ui,sans-serif!important}
+@media(max-width:540px){.foodoo-dialog{padding:22px 16px 18px!important}.foodoo-dialog-actions{flex-direction:column-reverse!important;width:100%!important}.foodoo-dialog-confirm,.foodoo-dialog-cancel{width:100%!important;margin:0!important}}
