@@ -19,7 +19,7 @@ def authorize_receipt_send(record, resend=False, at=None):
     if resend:
         if state!="submitted":
             raise SendDenied(409,"Receipt must be sent successfully before it can be resent")
-        last=data.get("last_sent_at")
+        last=data.get("last_sent_at") or data.get("updated_at")
         if last and (current-last).total_seconds()<120:
             raise SendDenied(429,"Wait at least two minutes between receipt sends")
     elif state=="submitted":
