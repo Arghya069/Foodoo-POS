@@ -38,7 +38,7 @@ if len(SECRET) < 32 or SECRET == "replace-with-a-long-random-secret":
 db = firestore.Client(project=PROJECT, database=DATABASE)
 password_hash = PasswordHash.recommended()
 COOKIE_SECURE = os.getenv("FOODOO_COOKIE_SECURE", "true").lower() == "true"
-app = FastAPI(title="Foodoo FastAPI + Firestore", version="0.1.0")
+app = FastAPI(title="Foodooo FastAPI + Firestore", version="0.1.0")
 app.include_router(create_webhook_receiver(db))
 
 def now():
@@ -581,7 +581,7 @@ def perform_whatsapp_send(order_id,payload,request,user,resend=False):
                 "receipt_number":order.get("receipt_number") or order_id,
                 "total":money(order["total_paise"]),
                 "token_number":str(order.get("token_number","")),
-                "restaurant_name":restaurant.get("name","Foodoo")}
+                "restaurant_name":restaurant.get("name","Foodooo")}
         if any(field not in values for field in fields):
             raise WhatsAppConfigError("Unsupported template body field")
         filename="foodoo-"+str(order.get("receipt_number") or order_id)+".pdf"
