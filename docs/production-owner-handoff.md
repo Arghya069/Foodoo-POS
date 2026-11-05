@@ -397,3 +397,90 @@ public HTTPS URL.
 Official Meta docs:
 - https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/overview
 - https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages
+
+## 12. Final application security/receipt audit (5 November 2026)
+
+The connected repository was inspected and patched on
+`feat/fastapi-firestore-parity`. Cloud Shell's temporary port-5173 preview
+URL was **not externally reachable for independent HTTP/browser testing**.
+It remains a development server, not a security-approved production endpoint.
+
+### Safeguards added during the final review
+
+- Explicit `FOODOO_FIRESTORE_PROJECT` is now required on API startup to
+  prevent accidental data writes to an implicit GCP project.
+- Login failures are limited to eight attempts within five minutes for the
+  same username and server-observed network peer. Use Cloud Armor / edge
+  rate limiting as well; Cloud Run may report a shared proxy peer address.
+- API responses disable caching and include anti-framing, MIME sniffing and
+  conservative browser permissions headers. Enforce HTTPS in Cloud Run.
+- The UI no longer reuses WhatsApp consent saved for an earlier order;
+  staff must confirm consent for every new order.
+- Menu-upload field sizes and tax-rate inputs are validated, and extremely
+  large unit prices are rejected.
+- Sales reports and order history no longer silently exclude everything
+  beyond the most recent 1,000 orders. **However, unbounded Firestore scans
+  are not scalable**: implement date-indexed cursor pagination as restaurants
+  grow and measure query/read costs.
+- Receipt pages remain 57mm wide. Height is calculated from wrapped content,
+  and huge receipts are automatically continued onto another 57mm page
+  (rather than silently clipping due to the PDF viewer's page-size limit).
+  GSTIN/FSSAI print only if configured; tax totals appear on the final page.
+
+### Configure expiry for transient login throttle records
+
+```bash
+gcloud firestore fields ttls update expires_at \
+  --collection-group=login_attempts --enable-ttl --project="$PROJECT"
+```
+
+Verify the TTL policy and Firestore indexes in the **correct restaurant
+project**. The five-minute throttle expires logically even before TTL
+deletion occurs.
+
+### Validate before production build
+
+```bash
+cd ~/Foodoo-FastAPI
+git pull origin feat/fastapi-firestore-parity
+cd fastapi_backend
+source .venv/bin/activate
+pip install -r requirements.txt -r requirements-test.txt
+python -m pytest -q -v
+cd ../frontend
+npm install
+npm run build
+cd ..
+docker build -f Dockerfile.foodoo -t foodooo:release-candidate .
+```
+
+Stress receipt testing includes 1, 30, 100, 250, 400 and 1,000 items,
+including long wrapped names, continuation pages, footer placement and
+variable-height PDF assertions. These tests must pass in the owner's
+Cloud Shell environment before release; code commits alone are not evidence
+that the tests passed.
+
+**Additional release blockers/decisions:** independent Firestore backup and
+restore drill; session/CSRF role checks; production Cloud Run HTTPS and exact
+origin; Secret Manager references; printer paper-driver test (actual 57mm
+roll, no scaling); two-cashier concurrent checkout; a review of login
+rate-limit behavior behind the production load balancer; a dependency
+vulnerability scan; and staff rehearsal.
+
+Run these security/dependency checks on an internet-enabled build host:
+
+```bash
+cd frontend && npm audit --omit=dev && cd ..
+cd fastapi_backend
+python -m pip install pip-audit
+python -m pip_audit -r requirements.txt
+```
+
+The project currently has no committed `frontend/package-lock.json`; use
+`npm install` to generate one and commit the reviewed lockfile before
+treating builds as reproducible. Do not make `npm ci` mandatory until
+the lockfile exists.
+
+**No security certification is implied.** The live temporary Cloud Shell
+URL could not be inspected directly; perform authorized, non-disruptive
+runtime checks with a test account and deployed staging environment.
