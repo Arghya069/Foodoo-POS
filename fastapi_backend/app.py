@@ -24,7 +24,7 @@ from meta_webhook import create_webhook_receiver,event_id
 from login_guard import check_login_attempt,record_login_failure,clear_login_failures
 from order_audit import peer_address
 from pwdlib import PasswordHash
-from schemas import (Credentials, LoginResponse, MeResponse, RestaurantUpdate, RestaurantResponse,
+from schemas import (Credentials, ChangePasswordRequest, LoginResponse, MeResponse, RestaurantUpdate, RestaurantResponse,
     MenuInput, MenuPatch, MenuResponse, LineInput, OrderInput, OrderCreatedResponse,
     Payment, PaidResponse, ServingUpdate, TokenResponse, StaffCreate, StaffPatch,
     StaffResponse, ReceiptSendRequest, WhatsAppStatusResponse, WhatsAppSendResponse,
@@ -163,6 +163,36 @@ def logout(request:Request,response: Response):
         try:revoke_session(db,token)
         except NotFound:pass
     response.delete_cookie("foodoo_session", path="/", secure=COOKIE_SECURE, httponly=True, samesite="lax")
+    return {"ok":True}
+
+@app.post("/api/auth/change-password/",response_model=SuccessResponse)
+def change_own_password(payload:ChangePasswordRequest,response:Response,
+                        user=Depends(require_user)):
+    """Self-service password rotation for every signed-in Foodooo staff role."""
+    if payload.current_password==payload.new_password:
+        raise HTTPException(422,"New password must differ from the current password")
+    identity=db.collection("identities").document(user["id"])
+    tx=db.transaction()
+    @firestore.transactional
+    def change(transaction):
+        snap=identity.get(transaction=transaction)
+        if not snap.exists or not snap.to_dict().get("active",True):
+            raise HTTPException(401,"Account unavailable")
+        current=snap.to_dict()
+        if current.get("restaurant_id")!=user["restaurant_id"]:
+            raise HTTPException(403,"Invalid membership")
+        if not password_hash.verify(payload.current_password,current["password_hash"]):
+            raise HTTPException(400,"Current password is incorrect")
+        if password_hash.verify(payload.new_password,current["password_hash"]):
+            raise HTTPException(422,"Choose a different password")
+        transaction.update(identity,{"password_hash":password_hash.hash(payload.new_password),
+                                     "password_changed_at":now()})
+    change(tx)
+    # Invalidate ALL sessions including the one issuing the change.
+    revoke_user_sessions(db,user["id"])
+    response.delete_cookie("foodoo_session",path="/",secure=COOKIE_SECURE,
+                           httponly=True,samesite="lax")
+    response.headers["Cache-Control"]="no-store"
     return {"ok":True}
 
 @app.get("/api/auth/sessions/",response_model=list[SessionResponse])
