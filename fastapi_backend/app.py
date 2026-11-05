@@ -51,14 +51,14 @@ def now():
 def as_paise(value):
     try:
         amount = Decimal(str(value))
-        if not amount.is_finite() or amount < 0:
+        if not amount.is_finite() or amount < 0 or amount > 999999.99:
             raise ValueError()
         paise = amount * 100
         if paise != paise.to_integral_value():
             raise ValueError()
         return int(paise)
     except (ValueError, ArithmeticError):
-        raise HTTPException(422, "Use a nonnegative amount with at most 2 decimal places")
+        raise HTTPException(422, "Use an amount from 0 to 999999.99 with at most 2 decimal places")
 
 def money(paise):
     return str((Decimal(paise) / 100).quantize(Decimal("0.01")))
