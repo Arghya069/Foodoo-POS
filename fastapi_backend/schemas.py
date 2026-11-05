@@ -275,9 +275,18 @@ class OrderAuditResponse(BaseModel):
 
 class WhatsAppInboxItem(BaseModel):
     id: str
+    order_id: str | None = None
     message_id: str
     sender: str
     message_type: str
     body: str
     context_message_id: str = ""
     received_at: datetime
+
+class WhatsAppDeliveryItem(BaseModel):
+    id: str
+    meta_message_id: str
+    status: str
+    recipient: str = ""
+    event_at: datetime
+    error_codes: list[str] = Field(default_factory=list)
