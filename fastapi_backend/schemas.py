@@ -3,6 +3,7 @@
 Keep Firestore document shape private: these models describe the HTTP API,
 not the database persistence representation.
 """
+from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from typing import Literal
 
@@ -24,17 +25,30 @@ class MeResponse(BaseModel):
     restaurant_id: str
 
 class RestaurantUpdate(StrictRequest):
-    name: str | None = None
-    address: str | None = None
+    name: str | None = Field(default=None,max_length=160)
+    address: str | None = Field(default=None,max_length=500)
     contact_phone: str | None = None
     gstin: str | None = None
     fssai_license_number: str | None = None
-    logo_data: str | None = None
+    logo_data: str | None = Field(default=None,max_length=210000)
     branch_type: Literal["main","branch"] | None = None
     branch_name: str | None = None
     branch_code: str | None = None
     cgst_rate: str | None = None
     sgst_rate: str | None = None
+
+    @field_validator("cgst_rate","sgst_rate")
+    @classmethod
+    def validate_tax_rate(cls,value):
+        if value is None:
+            return value
+        try:
+            rate=Decimal(value)
+            if not rate.is_finite() or rate < 0 or rate > 100 or rate.as_tuple().exponent < -2:
+                raise ValueError("Tax rate must be between 0 and 100 with up to two decimals")
+        except (InvalidOperation,TypeError):
+            raise ValueError("Tax rate must be numeric")
+        return value
 
     @field_validator("fssai_license_number")
     @classmethod
@@ -59,24 +73,24 @@ class RestaurantResponse(BaseModel):
 
 class MenuInput(StrictRequest):
     name: str = Field(min_length=1, max_length=160)
-    price: str
-    description: str = ""
+    price: str = Field(min_length=1,max_length=20)
+    description: str = Field(default="",max_length=2000)
     food_type: str = "veg"
     food_subtype: str = "none"
     category: str = "main_course"
-    image_url: str = ""
-    image_data: str = ""
+    image_url: str = Field(default="",max_length=2048)
+    image_data: str = Field(default="",max_length=210000)
     active: bool = True
 
 class MenuPatch(StrictRequest):
     name: str | None = None
-    price: str | None = None
-    description: str | None = None
+    price: str | None = Field(default=None,max_length=20)
+    description: str | None = Field(default=None,max_length=2000)
     food_type: str | None = None
     food_subtype: str | None = None
     category: str | None = None
-    image_url: str | None = None
-    image_data: str | None = None
+    image_url: str | None = Field(default=None,max_length=2048)
+    image_data: str | None = Field(default=None,max_length=210000)
     active: bool | None = None
 
 class MenuResponse(BaseModel):
@@ -97,7 +111,7 @@ class LineInput(StrictRequest):
     quantity: int = Field(ge=1, le=999)
 
 class OrderInput(StrictRequest):
-    items: list[LineInput] = Field(min_length=1)
+    items: list[LineInput] = Field(min_length=1,max_length=2000)
     customer_name: str = Field(default="", max_length=160)
     customer_phone: str = Field(default="", max_length=25)
     whatsapp_consent: bool = False
