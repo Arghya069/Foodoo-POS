@@ -117,7 +117,14 @@ async def protect_mutations(request: Request, call_next):
         allowed=[x.strip() for x in os.getenv("FOODOO_ALLOWED_ORIGINS","http://localhost:5173").split(",") if x.strip()]
         if origin and origin not in allowed:
             return JSONResponse({"detail":"Untrusted origin"},status_code=403)
-    return await call_next(request)
+    result=await call_next(request)
+    result.headers["X-Content-Type-Options"]="nosniff"
+    result.headers["X-Frame-Options"]="DENY"
+    result.headers["Referrer-Policy"]="strict-origin-when-cross-origin"
+    result.headers["Permissions-Policy"]="camera=(), microphone=(), geolocation=()"
+    result.headers["Cache-Control"]=("no-store" if request.url.path.startswith("/api/")
+                                    else result.headers.get("Cache-Control","no-cache"))
+    return result
 
 @app.get("/healthz")
 def health():
