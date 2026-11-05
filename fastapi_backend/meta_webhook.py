@@ -11,7 +11,7 @@ import hmac
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from google.api_core.exceptions import AlreadyExists
@@ -84,6 +84,7 @@ def merge_status(db,status):
         if previous==timestamp and rank.get(new_status,-1)<rank.get(old.get("status"),-1):
             return False
         transaction.set(ref,{
+            "expires_at":datetime.now(timezone.utc)+timedelta(days=180),
             "meta_message_id":message_id,
             "status":new_status,
             "recipient":str(status.get("recipient_id") or "")[:30],
@@ -128,8 +129,14 @@ def persist_meta_events(db,payload,expected_phone_id=None):
                     "body":body,
                     "context_message_id":str((message.get("context") or {}).get("id") or "")[:150],
                     "received_at":parse_meta_time(message.get("timestamp")),
-                    "recorded_at":firestore.SERVER_TIMESTAMP
+                    "recorded_at":firestore.SERVER_TIMESTAMP,
+                    "expires_at":datetime.now(timezone.utc)+timedelta(days=90)
                 }
+                context_id=doc["context_message_id"]
+                if context_id:
+                    link=db.collection("whatsapp_message_links").document(event_id(context_id)).get()
+                    if link.exists:
+                        doc["order_id"]=link.to_dict().get("order_id")
                 try:
                     db.collection("whatsapp_inbox").document(event_id(mid)).create(doc)
                     result["incoming"]+=1
@@ -147,7 +154,8 @@ def persist_meta_events(db,payload,expected_phone_id=None):
                     db.collection("whatsapp_events").document(fingerprint).create({
                         "event_type":field,
                         "received_at":firestore.SERVER_TIMESTAMP,
-                        "payload":value
+                        "payload":value,
+                        "expires_at":datetime.now(timezone.utc)+timedelta(days=90)
                     })
                     result["changes"]+=1
                 except AlreadyExists:
